@@ -1,0 +1,17 @@
+# Dépendances
+node_modules/
+
+# Environnement (secrets — ne jamais commit)
+.env
+
+# Données locales (signaux enregistrés)
+data/
+
+# Logs
+*.log
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
