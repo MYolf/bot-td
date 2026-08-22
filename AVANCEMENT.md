@@ -10,6 +10,13 @@
 - **Phase 1 — Configuration**
   - `app/config/settings.py` : configuration typée, secrets obligatoires, listes blanches configurables
   - `requirements.txt`, environnement virtuel `.venv` créé et installé
+- **Phase 2 — Application Discord**
+  - App créée dans le Developer Portal, bot invité avec permissions minimales, token dans `.env` (reset suite à une exposition accidentelle dans `.env.example`, corrigée sans commit)
+- **Phase 3 — Bot Discord + `/status`**
+  - `app/discord/bot.py` : `SignalBot(commands.Bot)`, intents minimaux (`guilds`), sync des commandes limitée à la guild, handler d'erreurs global (log + message sobre, jamais de stacktrace)
+  - `app/discord/commands.py` : `/status` en ephemeral (Environment, Database, Discord)
+  - Démarrage dans le lifespan FastAPI (`asyncio.create_task`), arrêt propre au shutdown ; `DISCORD_ENABLED=false` permet de désactiver le bot (tests)
+  - Vérifié manuellement : bot connecté (`bot-td-signals`), `/status` fonctionnel dans Discord
 - **Phase 4 — FastAPI**
   - `app/main.py` : application FastAPI, `GET /health` → `{"status": "ok"}` (testé avec un vrai serveur)
 - **Phase 5 — Webhook TradingView**
@@ -22,35 +29,18 @@
   - `app/signals/validator.py` : listes blanches (stratégie/symbole/exchange/timeframe) + fraîcheur du timestamp
 - **Phase 9 — Cohérence**
   - BUY : SL < entrée < TP ; SELL : TP < entrée < SL, sinon rejet loggé avec code de raison
-- **Tests : 25/25 passent** (`pytest`)
+- **Tests : 31/31 passent** (`pytest`, dont 6 sur le bot Discord)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 2-3** — Bot Discord (`app/discord/bot.py`) + commande `/status` → *attend que tu crées l'app Discord*
-- **Phase 10-11** — Déduplication + PostgreSQL → *attend que tu installes Docker*
+- **Phase 10-11** — Déduplication + PostgreSQL (Docker installé ✔, `DATABASE_URL` prêt dans `.env`)
 - **Phase 12-13** — Envoi Discord (embeds) + pipeline complet
 - **Phase 14+** — Pine Script, paper trading, stats, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
-### 1. Créer l'application Discord (pour la Phase 2-3) ⏳
-1. Ouvrir https://discord.com/developers/applications et se connecter
-2. **New Application** → nommer `bot-td-signals` → **Create**
-3. Onglet **Bot** → **Reset Token** → **Copy** (c'est le `DISCORD_BOT_TOKEN` — ne le donner à personne)
-4. Désactiver **Public Bot** (recommandé). Ne jamais activer Administrator
-5. **OAuth2 → URL Generator** : cocher scopes `bot` + `applications.commands`
-6. Permissions : uniquement `View Channels`, `Send Messages`, `Embed Links`, `Read Message History`
-7. Ouvrir l'URL générée → inviter le bot sur mon serveur
-8. Discord : activer le **mode développeur** (Paramètres → Avancé)
-9. Copier l'ID du **serveur** (`DISCORD_GUILD_ID`) et l'ID du **salon signaux** (`DISCORD_SIGNALS_CHANNEL_ID`)
-
-### 2. Installer Docker Desktop (pour la Phase 10-11) ⏳
-1. Télécharger https://www.docker.com/products/docker-desktop/ (Docker Desktop for Windows)
-2. Installer avec l'option **WSL 2** → redémarrer le PC si demandé
-3. Ouvrir Docker Desktop et attendre "Docker Desktop is running"
-
-### 3. Remplir mon fichier `.env` (après les étapes 1 et 2) ⏳
-- Copier `.env.example` en `.env` et remplir les valeurs (ne JAMAIS le commité)
+Rien de bloquant pour l'instant ✅ (app Discord créée, bot invité, Docker installé, `.env` rempli).
+Les prochaines actions utilisateur seront indiquées ici au fil des phases.
 
 ## 📌 Rappels importants
 

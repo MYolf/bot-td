@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,  # "VAR=" dans .env => valeur par défaut (None)
         extra="ignore",
     )
 
@@ -25,6 +26,8 @@ class Settings(BaseSettings):
 
     # --- Discord ---
     discord_bot_token: str = Field(alias="DISCORD_BOT_TOKEN")
+    # Permet de désactiver le bot (tests) : l'API fonctionne alors sans Discord.
+    discord_enabled: bool = Field(default=True, alias="DISCORD_ENABLED")
     discord_guild_id: int | None = Field(default=None, alias="DISCORD_GUILD_ID")
     discord_signals_channel_id: int | None = Field(
         default=None, alias="DISCORD_SIGNALS_CHANNEL_ID"

@@ -59,4 +59,5 @@ def test_settings_fails_without_secret(monkeypatch):
     from app.config.settings import Settings
 
     with pytest.raises(Exception):
-        Settings()
+        # _env_file=None : ne pas retomber sur le .env local du développeur.
+        Settings(_env_file=None)

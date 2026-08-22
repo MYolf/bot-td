@@ -10,6 +10,8 @@ import os
 os.environ.setdefault("DISCORD_BOT_TOKEN", "token-test")
 os.environ.setdefault("TRADINGVIEW_WEBHOOK_SECRET", "secret-test")
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/testdb")
+# Pas de connexion Discord réelle pendant les tests.
+os.environ.setdefault("DISCORD_ENABLED", "false")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
