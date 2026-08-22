@@ -1,0 +1,108 @@
+//@version=6
+// =============================================================================
+// Momentum V1 — première stratégie du projet bot-td (Phases 14-15)
+// =============================================================================
+// BUY  : EMA50 > EMA200 ET RSI > seuil haut ET MACD bullish (ligne > signal)
+// SELL : EMA50 < EMA200 ET RSI < seuil bas  ET MACD bearish (ligne < signal)
+//
+// Le signal n'est émis qu'à la TRANSITION (conditions réunies maintenant mais
+// pas à la bougie précédente) : pas de spam d'alertes à chaque bougie.
+//
+// Anti-repainting (Phase 15) — décisions :
+//  - calc_on_every_tick = false        : la stratégie ne se recalcule PAS en
+//                                         temps réel intra-bougie (comportement
+//                                         historique == temps réel à la clôture)
+//  - process_orders_on_close = true    : l'ordre simulé est exécuté à la
+//                                         clôture de la bougie de signal
+//  - aucune utilisation de request.security : pas de source de repainting MTF
+//  - conditions sur bougies FERMÉES uniquement (jamais high/low de la bougie
+//    en cours, jamais barstate.isrealtime)
+//  - commission 0.1 % et slippage 2 ticks actifs dès le départ : un backtest
+//    sans frais n'a aucune valeur
+//  - l'alerte devra être créée en "Once Per Bar Close" (Phase 16)
+//
+// Rappel projet : cette stratégie ne passe AUCUN ordre réel. Les strategy.*
+// sont des ordres SIMULÉS pour le backtest ; seul l'alert_message part vers
+// le webhook bot-td.
+// =============================================================================
+
+strategy("Momentum V1", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
+     commission_type = strategy.commission.percent, commission_value = 0.1,
+     slippage = 2,
+     calc_on_every_tick = false,
+     process_orders_on_close = true)
+
+// --- Paramètres configurables (jamais hardcodés côté backend) ---
+emaFastLen  = input.int(50,  "EMA rapide", minval = 1)
+emaSlowLen  = input.int(200, "EMA lente",  minval = 1)
+rsiLen      = input.int(14,  "RSI longueur", minval = 2)
+rsiLongTh   = input.float(55, "RSI seuil BUY",  minval = 50, maxval = 100)
+rsiShortTh  = input.float(45, "RSI seuil SELL", minval = 0, maxval = 50)
+macdFast    = input.int(12, "MACD rapide", minval = 1)
+macdSlow    = input.int(26, "MACD lent",   minval = 1)
+macdSignal  = input.int(9,  "MACD signal", minval = 1)
+slPct       = input.float(1.0, "Stop Loss (%)",   minval = 0.1, step = 0.1) / 100
+tpPct       = input.float(2.0, "Take Profit (%)", minval = 0.1, step = 0.1) / 100
+
+// Secret du webhook : renseigné dans les paramètres de la stratégie dans
+// TradingView (jamais commité dans ce dépôt, jamais visible dans le code).
+webhookSecret = input.string("", "Secret webhook bot-td",
+     tooltip = "Copier la valeur TRADINGVIEW_WEBHOOK_SECRET du fichier .env du serveur bot-td.")
+
+// --- Indicateurs ---
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+[macdLine, macdSignalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// --- Conditions d'état ---
+trendUp     = emaFast > emaSlow
+trendDown   = emaFast < emaSlow
+macdBullish = macdLine > macdSignalLine
+macdBearish = macdLine < macdSignalLine
+
+allBullish = trendUp and rsiVal > rsiLongTh and macdBullish
+allBearish = trendDown and rsiVal < rsiShortTh and macdBearish
+
+// Signal à la transition uniquement (évite une alerte à chaque bougie).
+longCondition  = allBullish and not allBullish[1]
+shortCondition = allBearish and not allBearish[1]
+
+// --- Construction du JSON pour le webhook (schéma exact du backend) ---
+// Nombres toujours via str.tostring ; timestamp UTC ISO 8601.
+buildAlertJson(action, entry, sl, tp) =>
+    '{"secret":"' + webhookSecret + '"' +
+     ',"strategy":"momentum_v1"' +
+     ',"symbol":"' + syminfo.ticker + '"' +
+     ',"exchange":"' + syminfo.prefix + '"' +
+     ',"timeframe":"' + timeframe.period + '"' +
+     ',"action":"' + action + '"' +
+     ',"price":"' + str.tostring(entry) + '"' +
+     ',"stop_loss":"' + str.tostring(sl) + '"' +
+     ',"take_profit":"' + str.tostring(tp) + '"' +
+     ',"timestamp":"' + str.format_time(timenow, "yyyy-MM-dd'T'HH:mm:ss'Z'", "UTC") + '"}'
+
+// --- Ordres simulés : chaque entrée a TOUJOURS sa sortie (SL/TP) ---
+if longCondition
+    entryPrice = close
+    slPrice = entryPrice * (1 - slPct)
+    tpPrice = entryPrice * (1 + tpPct)
+    strategy.entry("Long", strategy.long,
+        alert_message = buildAlertJson("BUY", entryPrice, slPrice, tpPrice))
+    strategy.exit("Long TP/SL", from_entry = "Long", stop = slPrice, limit = tpPrice)
+
+if shortCondition
+    entryPrice = close
+    slPrice = entryPrice * (1 + slPct)
+    tpPrice = entryPrice * (1 - tpPct)
+    strategy.entry("Short", strategy.short,
+        alert_message = buildAlertJson("SELL", entryPrice, slPrice, tpPrice))
+    strategy.exit("Short TP/SL", from_entry = "Short", stop = slPrice, limit = tpPrice)
+
+// --- Affichage (lecture du graphique) ---
+plot(emaFast, "EMA rapide", color = color.teal)
+plot(emaSlow, "EMA lente", color = color.orange)
+plotshape(longCondition,  "Signal BUY",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size = size.small)
+plotshape(shortCondition, "Signal SELL", shape.triangledown, location.abovebar, color.new(color.red, 0), size = size.small)

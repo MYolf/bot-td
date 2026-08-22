@@ -46,18 +46,33 @@
   - Pipeline : persistance AVANT notification ; échec Discord => signal conservé en base (statut ERROR)
 - **Phase 13 — Pipeline complet vérifié**
   - JSON manuel -> validation -> PostgreSQL -> Discord : BUY + SELL envoyés (statut SENT, message_id réels), doublon ignoré, embeds confirmés visuellement dans Discord
-- **Tests : 55/55 passent** (`pytest`, dont 14 sur embeds/notification)
+- **Phase 14 — Stratégie Pine `momentum_v1`**
+  - `pine/momentum_v1.pine` (Pine v6) : EMA 50/200 + RSI 14 + MACD 12/26/9, tous paramètres configurables (inputs)
+  - Signal à la transition uniquement (pas de spam) ; SL/TP en % ; `strategy.exit` systématique (jamais d'entrée sans sortie)
+  - `alert_message` = JSON strictement conforme au schéma du webhook ; secret renseigné via input TradingView (jamais commité)
+- **Phase 15 — Anti-repainting (intégré dès la conception)**
+  - `calc_on_every_tick = false`, `process_orders_on_close = true`, aucun `request.security`
+  - Conditions sur bougies fermées uniquement ; commission 0.1 % + slippage 2 ticks actifs dès le backtest
+  - Validation en conditions réelles à faire en Phase 16-17 (alerte "Once Per Bar Close", comparaison Replay/historique)
+- **Tests : 55/55 passent** (`pytest`, inchangés — le Pine se valide dans TradingView)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 14-15** — Première stratégie Pine Script + anti-repainting
-- **Phase 16-17** — Alertes TradingView réelles + connexion
+- **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte)
 - **Phase 18+** — Error handling, logging, commandes Discord, paper trading, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
-Rien de bloquant pour l'instant ✅ (app Discord créée, bot invité, Docker installé, `.env` rempli).
-Les prochaines actions utilisateur seront indiquées ici au fil des phases.
+Rien de bloquant pour les phases 14-15 ✅ (app Discord créée, bot invité, Docker installé, `.env` rempli).
+
+### ⏳ À venir (Phase 16) — créer l'alerte TradingView
+1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_v1.pine` → **Add to chart**
+2. Symbole : BTCUSDT (BINANCE), timeframe 15m ou 60m
+3. Renseigner le **Secret webhook** dans les paramètres de la stratégie (valeur `TRADINGVIEW_WEBHOOK_SECRET` du `.env`)
+4. Créer l'alerte : condition **Momentum V1**, type **Order fills** (ou alert() selon config), message `{{strategy.order.alert_message}}`, **Once Per Bar Close**
+5. URL du webhook : `https://TON_DOMAINE/webhook/tradingview` (⚠️ nécessite un serveur accessible en HTTPS — voir Phase 17)
+
+*(Instructions détaillées pas à pas le moment venu)*
 
 ## 📌 Rappels importants
 
