@@ -1,11 +1,19 @@
-# Dépendances
-node_modules/
-
-# Environnement (secrets — ne jamais commit)
+# Environnement (secrets — ne JAMAIS commit)
 .env
 
-# Données locales (signaux enregistrés)
-data/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Base de données locale
+*.sqlite3
+*.db
 
 # Logs
 *.log
@@ -15,3 +23,4 @@ data/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
