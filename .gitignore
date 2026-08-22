@@ -23,4 +23,6 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
-.claude/
+
+# Claude Code : settings locaux uniquement (les skills .claude/skills/ sont versionnés)
+.claude/settings.local.json
