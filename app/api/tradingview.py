@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings, get_settings
 from app.database.database import provide_session_factory
-from app.database.repository import SignalRepository, StrategyRepository
+from app.database.repository import SignalRepository, StrategyRepository, compute_risk_reward
+from app.discord.embeds import build_signal_embed
+from app.services.discord_service import DiscordSendError, SignalNotifier, provide_notifier
 from app.signals.schemas import TradingViewSignal
 from app.signals.validator import validate_signal
 
@@ -34,6 +36,7 @@ async def receive_tradingview_signal(
     session_factory: Annotated[
         async_sessionmaker[AsyncSession], Depends(provide_session_factory)
     ],
+    notifier: Annotated[SignalNotifier, Depends(provide_notifier)],
 ) -> dict:
     logger.info(
         "TradingView webhook received strategy=%s symbol=%s timeframe=%s action=%s",
@@ -64,7 +67,8 @@ async def receive_tradingview_signal(
     logger.info("Signal validated strategy=%s symbol=%s action=%s", signal.strategy, signal.symbol, signal.action)
 
     # --- Phases 10-11 : stockage + déduplication (contrainte UNIQUE signal_uid) ---
-    # La session est ouverte puis fermée ici, avant toute notification (Phase 12).
+    # La persistance précède la notification : un signal non stocké n'est pas
+    # notifié ; si Discord échoue, il reste en base (statut ERROR).
     try:
         async with session_factory() as session:
             try:
@@ -99,4 +103,36 @@ async def receive_tradingview_signal(
         return {"status": "duplicate"}
 
     logger.info("Signal stocké id=%s signal_uid=%s", insert.signal_id, insert.signal_uid)
-    return {"status": "accepted", "signal_id": insert.signal_id}
+
+    # --- Phase 12 : notification Discord (embed), puis statut SENT/ERROR ---
+    embed = build_signal_embed(
+        action=signal.action,
+        symbol=signal.symbol,
+        strategy=signal.strategy,
+        timeframe=signal.timeframe,
+        entry_price=signal.price,
+        stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit,
+        risk_reward=compute_risk_reward(signal),
+        signal_time=signal.timestamp,
+    )
+    try:
+        message_id = await notifier.send_signal(embed)
+    except DiscordSendError:
+        logger.error(
+            "Notification Discord échouée signal_id=%s signal_uid=%s (statut ERROR)",
+            insert.signal_id,
+            insert.signal_uid,
+        )
+        async with session_factory() as session:
+            await SignalRepository(session).mark_error(insert.signal_id)
+            await session.commit()
+        return {"status": "stored_not_notified", "signal_id": insert.signal_id}
+
+    async with session_factory() as session:
+        await SignalRepository(session).mark_sent(insert.signal_id, message_id)
+        await session.commit()
+    logger.info(
+        "Signal notifié id=%s message_id=%s statut=SENT", insert.signal_id, message_id
+    )
+    return {"status": "sent", "signal_id": insert.signal_id}

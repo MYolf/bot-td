@@ -39,12 +39,20 @@
   - Webhook branché : validation -> insertion (VALIDATED) -> 503 propre si DB indisponible
   - **Windows** : lancement avec `--loop app.main:selector_loop` (psycopg async incompatible ProactorEventLoop, imposé par uvicorn)
   - Vérifié manuellement : 2 envois identiques -> `accepted` puis `duplicate`, une seule ligne en base
-- **Tests : 41/41 passent** (`pytest`, dont 10 sur déduplication/persistance)
+- **Phase 12 — Envoi Discord (embeds)**
+  - `app/discord/embeds.py` : embeds conformes Projet.md §22 (🟢 LONG / 🔴 SHORT, prix lisibles, RR `1:2`, heure UTC, lisible mobile)
+  - `app/services/discord_service.py` : encapsule totalement discord.py (interface `SignalNotifier` injectable/mockable), `DiscordSendError` maîtrisé
+  - Repository : `mark_sent` (statut SENT + `discord_message_id` stocké), `mark_error`
+  - Pipeline : persistance AVANT notification ; échec Discord => signal conservé en base (statut ERROR)
+- **Phase 13 — Pipeline complet vérifié**
+  - JSON manuel -> validation -> PostgreSQL -> Discord : BUY + SELL envoyés (statut SENT, message_id réels), doublon ignoré, embeds confirmés visuellement dans Discord
+- **Tests : 55/55 passent** (`pytest`, dont 14 sur embeds/notification)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 12-13** — Envoi Discord (embeds) + pipeline complet
-- **Phase 14+** — Pine Script, paper trading, stats, production
+- **Phase 14-15** — Première stratégie Pine Script + anti-repainting
+- **Phase 16-17** — Alertes TradingView réelles + connexion
+- **Phase 18+** — Error handling, logging, commandes Discord, paper trading, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 

@@ -42,12 +42,19 @@ async def lifespan(app: FastAPI):
     bot_task: asyncio.Task | None = None
     if settings.discord_enabled:
         from app.discord.bot import create_bot, run_bot
+        from app.services.discord_service import DiscordService, set_notifier
 
         bot = create_bot(settings)
         # Un seul loop : celui de FastAPI/Uvicorn, pas de thread séparé.
         bot_task = asyncio.create_task(
             run_bot(bot, settings.discord_bot_token),
             name="discord-bot",
+        )
+        # Notifieur utilisé par le pipeline des signaux (Phase 12) : le bot
+        # peut mettre quelques secondes à se connecter, is_ready() est
+        # vérifié à chaque envoi.
+        set_notifier(
+            DiscordService(bot, settings.discord_signals_channel_id)
         )
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
@@ -67,6 +74,9 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("Bot Discord arrêté")
+    from app.services.discord_service import set_notifier
+
+    set_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 

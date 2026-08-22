@@ -170,7 +170,7 @@ class TestWebhookDeduplication:
         second = client.post("/webhook/tradingview", json=payload)
 
         assert premier.status_code == 202
-        assert premier.json()["status"] == "accepted"
+        assert premier.json()["status"] == "sent"
         assert second.status_code == 202
         assert second.json()["status"] == "duplicate"
 
@@ -188,5 +188,5 @@ class TestWebhookDeduplication:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         autre = dict(base, timestamp=(datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat())
-        assert client.post("/webhook/tradingview", json=base).json()["status"] == "accepted"
-        assert client.post("/webhook/tradingview", json=autre).json()["status"] == "accepted"
+        assert client.post("/webhook/tradingview", json=base).json()["status"] == "sent"
+        assert client.post("/webhook/tradingview", json=autre).json()["status"] == "sent"

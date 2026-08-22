@@ -32,7 +32,7 @@ def test_webhook_valid_buy(client):
     response = client.post("/webhook/tradingview", json=_valid_payload())
     assert response.status_code == 202
     body = response.json()
-    assert body["status"] == "accepted"
+    assert body["status"] == "sent"
     assert body["signal_id"] == 1
 
 

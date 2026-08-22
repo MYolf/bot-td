@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,3 +115,21 @@ class SignalRepository:
             logger.info("Signal dupliqué ignoré signal_uid=%s", signal_uid)
             return InsertResult(duplicate=True, signal_id=None, signal_uid=signal_uid)
         return InsertResult(duplicate=False, signal_id=row.id, signal_uid=signal_uid)
+
+    async def mark_sent(self, signal_id: int, discord_message_id: int) -> None:
+        """Passe le signal à SENT et stocke l'identifiant du message Discord."""
+        await self._session.execute(
+            sa_update(Signal)
+            .where(Signal.id == signal_id)
+            .values(status="SENT", discord_message_id=discord_message_id)
+        )
+
+    async def mark_error(self, signal_id: int) -> None:
+        """Passe le signal à ERROR (échec de notification, signal conservé)."""
+        await self._session.execute(
+            sa_update(Signal).where(Signal.id == signal_id).values(status="ERROR")
+        )
+
+    async def get(self, signal_id: int) -> Signal | None:
+        """Charge un signal par id (commandes Discord, re-notification)."""
+        return await self._session.get(Signal, signal_id)

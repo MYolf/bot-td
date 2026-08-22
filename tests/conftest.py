@@ -24,6 +24,23 @@ from app.config.settings import Settings, get_settings  # noqa: E402
 from app.database.database import provide_session_factory  # noqa: E402
 from app.database.models import Base  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.discord_service import provide_notifier  # noqa: E402
+
+
+class FakeNotifier:
+    """Notifieur factice : enregistre les embeds envoyés, sans Discord."""
+
+    def __init__(self):
+        self.sent: list = []
+        self.fail = False
+
+    async def send_signal(self, embed) -> int:
+        if self.fail:
+            from app.services.discord_service import DiscordSendError
+
+            raise DiscordSendError("discord indisponible (test)")
+        self.sent.append(embed)
+        return 1000 + len(self.sent)  # message_id factice
 
 
 @pytest.fixture
@@ -51,9 +68,13 @@ def client(test_settings: Settings) -> TestClient:
         return async_sessionmaker(engine, expire_on_commit=False)
 
     factory = asyncio.run(_create_tables())
+    fake_notifier = FakeNotifier()
 
     app.dependency_overrides[get_settings] = lambda: test_settings
     app.dependency_overrides[provide_session_factory] = lambda: factory
+    app.dependency_overrides[provide_notifier] = lambda: fake_notifier
     with TestClient(app) as test_client:
+        test_client.notifier = fake_notifier  # type: ignore[attr-defined]
+        test_client.db_factory = factory  # type: ignore[attr-defined]
         yield test_client
     app.dependency_overrides.clear()
