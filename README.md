@@ -59,7 +59,9 @@ cp .env.example .env          # puis remplir les valeurs
 
 ```bash
 docker compose up -d          # PostgreSQL
-uvicorn app.main:app --reload # API + bot
+alembic upgrade head          # migrations (première fois uniquement)
+# Windows : le flag --loop est requis (psycopg async incompatible ProactorEventLoop)
+uvicorn app.main:app --reload --loop app.main:selector_loop
 ```
 
 ## Avertissement

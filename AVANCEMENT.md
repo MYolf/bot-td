@@ -29,11 +29,20 @@
   - `app/signals/validator.py` : listes blanches (stratégie/symbole/exchange/timeframe) + fraîcheur du timestamp
 - **Phase 9 — Cohérence**
   - BUY : SL < entrée < TP ; SELL : TP < entrée < SL, sinon rejet loggé avec code de raison
-- **Tests : 31/31 passent** (`pytest`, dont 6 sur le bot Discord)
+- **Phase 10 — Déduplication**
+  - `app/signals/deduplication.py` : `signal_uid` = `strategy:symbol:timeframe:timestamp_bougie:action`
+  - Contrainte UNIQUE en base ; conflit => rollback propre + statut DUPLICATE, jamais deux messages Discord
+- **Phase 11 — PostgreSQL**
+  - `docker-compose.yml` : PostgreSQL 16 (volume persistant, healthcheck)
+  - `app/database/` : `database.py` (engine async + sessions), `models.py` (strategies, signals, paper_positions, paper_trades ; prix `Numeric(20,8)`, timestamps UTC, CHECK status/action), `repository.py` (pattern repository, RR calculé côté backend)
+  - Alembic initialisé (`migrations/`), URL lue depuis la config, migration initiale appliquée
+  - Webhook branché : validation -> insertion (VALIDATED) -> 503 propre si DB indisponible
+  - **Windows** : lancement avec `--loop app.main:selector_loop` (psycopg async incompatible ProactorEventLoop, imposé par uvicorn)
+  - Vérifié manuellement : 2 envois identiques -> `accepted` puis `duplicate`, une seule ligne en base
+- **Tests : 41/41 passent** (`pytest`, dont 10 sur déduplication/persistance)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 10-11** — Déduplication + PostgreSQL (Docker installé ✔, `DATABASE_URL` prêt dans `.env`)
 - **Phase 12-13** — Envoi Discord (embeds) + pipeline complet
 - **Phase 14+** — Pine Script, paper trading, stats, production
 
@@ -46,7 +55,7 @@ Les prochaines actions utilisateur seront indiquées ici au fil des phases.
 
 - Le système **ne passe jamais d'ordre** : signalisation uniquement
 - Les secrets vont **uniquement** dans `.env` (jamais commités, jamais montrés)
-- Commandes utiles : `pytest` (tests), `uvicorn app.main:app --reload` (API)
+- Commandes utiles : `pytest` (tests), `uvicorn app.main:app --reload --loop app.main:selector_loop` (API + bot, Windows)
 - Tester le webhook localement :
   ```bash
   curl -X POST http://localhost:8000/webhook/tradingview -H "Content-Type: application/json" \

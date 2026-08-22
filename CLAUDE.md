@@ -75,7 +75,8 @@ pip install -r requirements.txt
 docker compose up -d                              # PostgreSQL
 
 # Application (API + bot Discord dans un seul process)
-uvicorn app.main:app --reload
+# Windows : --loop est requis (psycopg async incompatible ProactorEventLoop)
+uvicorn app.main:app --reload --loop app.main:selector_loop
 
 # Tests
 pytest

@@ -6,7 +6,23 @@ Le bot Discord (Phase 3) démarre dans le même process, via le lifespan.
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
+
+# Windows : psycopg async exige un SelectorEventLoop (uvicorn choisirait sinon
+# le ProactorEventLoop par défaut, incompatible). À faire avant toute création
+# de loop, donc au moment de l'import.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def selector_loop() -> asyncio.SelectorEventLoop:
+    """Loop compatible psycopg async sur Windows.
+
+    À utiliser au lancement : uvicorn app.main:app --loop app.main:selector_loop
+    (uvicorn force sinon un ProactorEventLoop sur Windows, incompatible psycopg).
+    """
+    return asyncio.SelectorEventLoop()
 
 from fastapi import FastAPI
 
@@ -37,6 +53,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
 
+    # --- Phase 11 : engine base de données ---
+    from app.database.database import dispose_engine, init_engine
+
+    init_engine(settings.database_url)
+
     yield
 
     if bot_task is not None:
@@ -46,6 +67,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("Bot Discord arrêté")
+    await dispose_engine()
     logger.info("Application arrêtée")
 
 

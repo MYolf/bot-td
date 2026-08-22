@@ -1,0 +1,24 @@
+# Infrastructure de développement : PostgreSQL (Phase 11).
+# Les identifiants correspondent au DATABASE_URL du fichier .env :
+# postgresql+psycopg://bot_td:bot_td_dev_password@localhost:5432/bot_td
+
+services:
+  db:
+    image: postgres:16
+    container_name: bot-td-postgres
+    environment:
+      POSTGRES_USER: bot_td
+      POSTGRES_PASSWORD: bot_td_dev_password
+      POSTGRES_DB: bot_td
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot_td -d bot_td"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

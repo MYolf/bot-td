@@ -31,7 +31,9 @@ def test_health(client):
 def test_webhook_valid_buy(client):
     response = client.post("/webhook/tradingview", json=_valid_payload())
     assert response.status_code == 202
-    assert response.json() == {"status": "accepted"}
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["signal_id"] == 1
 
 
 def test_webhook_valid_sell(client):
