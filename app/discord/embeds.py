@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import discord
 
+from app.paper_trading.statistics import PerformanceStats
+
 GREEN = 0x2ECC71  # LONG
 RED = 0xE74C3C  # SHORT
 
@@ -136,11 +138,14 @@ def build_stats_embed(
     par_statut: dict[str, int],
     par_action: dict[str, int],
     par_strategie: dict[str, int],
+    paper: "PerformanceStats",
+    ouvertes: int = 0,
 ) -> discord.Embed:
-    """Statistiques des signaux stockés (commande /stats).
+    """Statistiques des signaux stockés + paper trading (commande /stats).
 
-    Les statistiques de performance en R (win rate, total R) arrivent avec le
-    paper trading (Phase 21) ; ici : volumétrie des signaux.
+    Les performances sont en R-multiples (simulation locale, Phase 21) :
+    toujours mentionner le nombre de trades — un échantillon < 30 n'a aucune
+    signification statistique.
     """
     embed = discord.Embed(title="📊 Statistiques des signaux", color=PURPLE)
     embed.add_field(name="Total", value=str(total), inline=True)
@@ -162,6 +167,17 @@ def build_stats_embed(
         or "—",
         inline=False,
     )
+    if paper.total > 0:
+        papier = (
+            f"{paper.total} clôturées · {ouvertes} ouvertes\n"
+            f"Win rate : {paper.win_rate}% ({paper.wins}W / {paper.losses}L)\n"
+            f"Total : {paper.total_r} R · Moyenne : {paper.avg_r} R\n"
+            f"Max drawdown : {paper.max_drawdown_r} R"
+        )
+    else:
+        papier = f"Aucune position clôturée ({ouvertes} ouverte(s))"
+    embed.add_field(name="Paper trading (R)", value=papier, inline=False)
+    embed.set_footer(text="Simulation locale en R — moins de 30 trades = non significatif")
     return embed
 
 

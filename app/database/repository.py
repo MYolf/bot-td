@@ -15,7 +15,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Signal, Strategy
+from app.database.models import PaperPosition, PaperTrade, Signal, Strategy
 from app.signals.deduplication import build_signal_uid
 from app.signals.schemas import TradingViewSignal
 
@@ -189,3 +189,76 @@ class SignalRepository:
             )
         ).all()
         return {name: count for name, count in rows}
+
+
+class PaperRepository:
+    """Accès aux tables paper_positions / paper_trades (Phase 21)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def open_for_signal(self, *, signal_id: int) -> PaperPosition | None:
+        """Ouvre une position virtuelle pour un signal stocké.
+
+        Retourne None si une position existe déjà pour ce signal (garantie
+        d'unicité même sans contrainte base : un signal = au plus une position).
+        """
+        existing = await self._session.scalar(
+            select(PaperPosition).where(PaperPosition.signal_id == signal_id)
+        )
+        if existing is not None:
+            return None
+        position = PaperPosition(signal_id=signal_id, status="OPEN")
+        self._session.add(position)
+        await self._session.flush()
+        return position
+
+    async def open_with_signal_by_symbol(self, symbol: str) -> list[tuple[PaperPosition, Signal]]:
+        """Positions ouvertes d'un symbole, avec le signal d'origine."""
+        stmt = (
+            select(PaperPosition, Signal)
+            .join(Signal, PaperPosition.signal_id == Signal.id)
+            .where(PaperPosition.status == "OPEN", Signal.symbol == symbol)
+            .order_by(PaperPosition.id)
+        )
+        return list((await self._session.execute(stmt)).all())
+
+    async def close_position(
+        self,
+        position: PaperPosition,
+        *,
+        exit_reason: str,
+        exit_price: Decimal,
+        result_r: Decimal,
+    ) -> None:
+        """Clôture une position et enregistre le trade simulé (résultat en R)."""
+        position.status = "CLOSED"
+        position.closed_at = datetime.now(timezone.utc)
+        position.result_r = result_r
+        self._session.add(
+            PaperTrade(
+                paper_position_id=position.id,
+                exit_reason=exit_reason,
+                exit_price=exit_price,
+            )
+        )
+
+    async def closed_results(self) -> list[Decimal]:
+        """Résultats (en R) de toutes les positions clôturées, par ordre chronologique."""
+        stmt = (
+            select(PaperPosition.result_r)
+            .where(PaperPosition.status == "CLOSED", PaperPosition.result_r.is_not(None))
+            .order_by(PaperPosition.closed_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def count_open(self) -> int:
+        """Nombre de positions actuellement ouvertes."""
+        return (
+            await self._session.scalar(
+                select(func.count())
+                .select_from(PaperPosition)
+                .where(PaperPosition.status == "OPEN")
+            )
+            or 0
+        )

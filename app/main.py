@@ -62,11 +62,18 @@ async def lifespan(app: FastAPI):
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
 
     # --- Phase 11 : engine base de données ---
-    from app.database.database import dispose_engine, init_engine
+    from app.database.database import dispose_engine, get_session_factory, init_engine
 
     init_engine(settings.database_url)
 
+    # --- Phase 21 : moteur de paper trading (simulation locale) ---
+    from app.paper_trading.engine import init_paper_engine, shutdown_paper_engine
+
+    init_paper_engine(get_session_factory())
+
     yield
+
+    shutdown_paper_engine()
 
     if bot_task is not None:
         bot_task.cancel()

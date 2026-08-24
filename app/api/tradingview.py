@@ -10,6 +10,7 @@ Sécurité :
 
 import logging
 import secrets as py_secrets
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -19,6 +20,7 @@ from app.config.settings import Settings, get_settings
 from app.database.database import provide_session_factory
 from app.database.repository import SignalRepository, StrategyRepository, compute_risk_reward
 from app.discord.embeds import build_signal_embed
+from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import DiscordSendError, SignalNotifier, provide_notifier
 from app.signals.schemas import TradingViewSignal
 from app.signals.validator import validate_signal
@@ -37,6 +39,7 @@ async def receive_tradingview_signal(
         async_sessionmaker[AsyncSession], Depends(provide_session_factory)
     ],
     notifier: Annotated[SignalNotifier, Depends(provide_notifier)],
+    paper_engine: Annotated[PaperTradingEngine | None, Depends(provide_paper_engine)],
 ) -> dict:
     logger.info(
         "TradingView webhook received strategy=%s symbol=%s timeframe=%s action=%s",
@@ -105,6 +108,25 @@ async def receive_tradingview_signal(
         return {"status": "duplicate"}
 
     logger.info("Signal stocké id=%s signal_uid=%s", insert.signal_id, insert.signal_uid)
+
+    # --- Phase 21 : paper trading (best-effort, après le stockage) ---
+    # La simulation ne doit JAMAIS mettre en péril le signal : tout échec est
+    # loggé et le pipeline continue (notification Discord inchangée).
+    if paper_engine is not None:
+        try:
+            await paper_engine.process_signal(
+                signal_id=insert.signal_id,
+                symbol=signal.symbol,
+                action=signal.action,
+                entry_price=Decimal(str(signal.price)),
+                stop_loss=Decimal(str(signal.stop_loss)),
+                take_profit=Decimal(str(signal.take_profit)),
+            )
+        except Exception:
+            logger.exception(
+                "Paper trading échoué signal_id=%s (signal conservé, pas d'impact)",
+                insert.signal_id,
+            )
 
     # --- Phase 12 : notification Discord (embed), puis statut SENT/ERROR ---
     embed = build_signal_embed(

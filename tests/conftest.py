@@ -24,6 +24,7 @@ from app.config.settings import Settings, get_settings  # noqa: E402
 from app.database.database import provide_session_factory  # noqa: E402
 from app.database.models import Base  # noqa: E402
 from app.main import app  # noqa: E402
+from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine  # noqa: E402
 from app.services.discord_service import provide_notifier  # noqa: E402
 
 
@@ -69,12 +70,15 @@ def client(test_settings: Settings) -> TestClient:
 
     factory = asyncio.run(_create_tables())
     fake_notifier = FakeNotifier()
+    paper_engine = PaperTradingEngine(factory)
 
     app.dependency_overrides[get_settings] = lambda: test_settings
     app.dependency_overrides[provide_session_factory] = lambda: factory
     app.dependency_overrides[provide_notifier] = lambda: fake_notifier
+    app.dependency_overrides[provide_paper_engine] = lambda: paper_engine
     with TestClient(app) as test_client:
         test_client.notifier = fake_notifier  # type: ignore[attr-defined]
         test_client.db_factory = factory  # type: ignore[attr-defined]
+        test_client.paper_engine = paper_engine  # type: ignore[attr-defined]
         yield test_client
     app.dependency_overrides.clear()

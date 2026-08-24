@@ -13,13 +13,14 @@ from discord.ext import commands
 
 from app.config.settings import Settings
 from app.database.database import ping_database, session_scope
-from app.database.repository import SignalRepository, StrategyRepository
+from app.database.repository import PaperRepository, SignalRepository, StrategyRepository
 from app.discord.embeds import (
     build_signal_embed_from_row,
     build_signals_list_embed,
     build_stats_embed,
     build_strategies_embed,
 )
+from app.paper_trading.statistics import compute_stats
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def signals_command(
     logger.info("/signals invoqué par %s (limite=%d)", interaction.user, limite)
 
 
-@app_commands.command(name="stats", description="Statistiques des signaux")
+@app_commands.command(name="stats", description="Statistiques des signaux et paper trading")
 async def stats_command(interaction: discord.Interaction) -> None:
     async with session_scope() as session:
         repository = SignalRepository(session)
@@ -88,11 +89,16 @@ async def stats_command(interaction: discord.Interaction) -> None:
         par_statut = await repository.count_by_status()
         par_action = await repository.count_by_action()
         par_strategie = await repository.count_by_strategy()
+        paper_repository = PaperRepository(session)
+        paper = compute_stats(await paper_repository.closed_results())
+        ouvertes = await paper_repository.count_open()
     embed = build_stats_embed(
         total=total,
         par_statut=par_statut,
         par_action=par_action,
         par_strategie=par_strategie,
+        paper=paper,
+        ouvertes=ouvertes,
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
     logger.info("/stats invoqué par %s", interaction.user)

@@ -69,12 +69,20 @@
   - `/stats` : total, par action, par statut, par stratégie (les stats de performance en R arrivent avec le paper trading, Phase 21)
   - `/strategy` : stratégies enregistrées (état actif/désactivé, version, nombre de signaux)
   - Lectures 100 % via le repository (`get_latest`, `count_all`, `count_by_*`, `list_all`) — jamais de SQL inline ; erreurs des commandes gérées par le handler global du bot (Phase 3)
-- **Tests : 68/68 passent** (`pytest`)
+- **Phase 21 — Paper trading (simulation locale)**
+  - `app/paper_trading/engine.py` : chaque signal stocké ouvre une position virtuelle (entry/SL/TP du signal) ; le prix d'entrée de tout signal ultérieur sur le même symbole sert de prix de marché → SL ou TP atteint = clôture + résultat en R (TP → +RR, SL → −1R, Projet.md §33)
+  - **Aucun appel réseau** : la simulation vit uniquement des signaux et de la base (règle absolue respectée) ; moteur initialisé dans le lifespan, branché au webhook en best-effort (un échec paper trading ne touche jamais le signal — testé)
+  - `app/paper_trading/statistics.py` : win rate, total R, avg R (expectancy), best/worst, profit factor, max drawdown en R — fonctions pures
+  - `PaperRepository` : open/close de positions, unicté un signal = au plus une position, résultats clôturés
+  - `/stats` enrichi : champ "Paper trading (R)" (trades clôturés/ouverts, win rate, total/moyenne R, max drawdown) + rappel "< 30 trades = non significatif"
+  - Tests : BUY/SELL, TP (+RR), SL (−1R), prix neutre, doublon (une seule position), symboles indépendants, échec moteur ne casse pas le webhook
+- **Tests : 88/88 passent** (`pytest`)
 
 ## 🔧 En cours / à venir (par Claude)
 
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 21+** — Paper trading, multi-assets/timeframes/stratégies, tests complets, Docker, production
+- **Phase 22-24** — Multi-assets / multi-timeframes / multi-stratégies (déjà largement couvert par les listes blanches configurables)
+- **Phase 25+** — Analyse multi-timeframe, scoring, tests complets, Docker, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
