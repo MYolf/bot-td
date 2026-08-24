@@ -76,12 +76,14 @@
   - `PaperRepository` : open/close de positions, unicté un signal = au plus une position, résultats clôturés
   - `/stats` enrichi : champ "Paper trading (R)" (trades clôturés/ouverts, win rate, total/moyenne R, max drawdown) + rappel "< 30 trades = non significatif"
   - Tests : BUY/SELL, TP (+RR), SL (−1R), prix neutre, doublon (une seule position), symboles indépendants, échec moteur ne casse pas le webhook
-- **Tests : 88/88 passent** (`pytest`)
+- **Phase 22 — Multi-actifs** : déjà couvert par `ALLOWED_SYMBOLS` (ajout d'un actif = une ligne de `.env`, zéro code) ; prouvé par tests (BTCUSDT/ETHUSDT/XAUUSD dans tout le pipeline, actif non configuré rejeté, positions paper par actif)
+- **Phase 23 — Multi-timeframes** : timeframe stocké avec chaque signal (depuis la Phase 11) ; **statistiques filtrables par timeframe** (`/stats timeframe:15`) — repository filtrable (`count_*`, `closed_results`), filtre invalide refusé avec la liste des valeurs autorisées
+- **Phase 24 — Multi-stratégies** : couvert par `ALLOWED_STRATEGIES` + table `strategies` + affichage lisible ("Momentum V1") ; **`/stats strategie:...`** filtre aussi par stratégie (filtres combinables, critères affichés dans l'embed)
+- **Tests : 102/102 passent** (`pytest`, `tests/test_multi.py`)
 
 ## 🔧 En cours / à venir (par Claude)
 
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 22-24** — Multi-assets / multi-timeframes / multi-stratégies (déjà largement couvert par les listes blanches configurables)
 - **Phase 25+** — Analyse multi-timeframe, scoring, tests complets, Docker, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)

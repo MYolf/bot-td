@@ -140,14 +140,18 @@ def build_stats_embed(
     par_strategie: dict[str, int],
     paper: "PerformanceStats",
     ouvertes: int = 0,
+    filtre: str | None = None,
 ) -> discord.Embed:
     """Statistiques des signaux stockés + paper trading (commande /stats).
 
     Les performances sont en R-multiples (simulation locale, Phase 21) :
     toujours mentionner le nombre de trades — un échantillon < 30 n'a aucune
-    signification statistique.
+    signification statistique. `filtre` (Phases 23-24) affiche les critères
+    de filtrage actifs.
     """
     embed = discord.Embed(title="📊 Statistiques des signaux", color=PURPLE)
+    if filtre:
+        embed.description = f"Filtre : {filtre}"
     embed.add_field(name="Total", value=str(total), inline=True)
     embed.add_field(
         name="Par action",

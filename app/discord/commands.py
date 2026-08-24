@@ -82,15 +82,45 @@ async def signals_command(
 
 
 @app_commands.command(name="stats", description="Statistiques des signaux et paper trading")
-async def stats_command(interaction: discord.Interaction) -> None:
+@app_commands.describe(
+    timeframe="Filtrer par timeframe (valeurs autorisées : 5, 15, 30, 60, 240, D)",
+    strategie="Filtrer par stratégie (ex : momentum_v1)",
+)
+async def stats_command(
+    interaction: discord.Interaction,
+    timeframe: str | None = None,
+    strategie: str | None = None,
+) -> None:
+    """Statistiques filtrables par timeframe et/ou stratégie (Phases 23-24)."""
+    settings: Settings = interaction.client.bot_settings  # type: ignore[attr-defined]
+    if timeframe is not None and timeframe not in settings.allowed_timeframes:
+        await interaction.response.send_message(
+            f"Timeframe inconnu : `{timeframe}`. Valeurs autorisées : "
+            + ", ".join(f"`{t}`" for t in settings.allowed_timeframes),
+            ephemeral=True,
+        )
+        return
+    if strategie is not None and strategie not in settings.allowed_strategies:
+        await interaction.response.send_message(
+            f"Stratégie inconnue : `{strategie}`. Valeurs autorisées : "
+            + ", ".join(f"`{s}`" for s in settings.allowed_strategies),
+            ephemeral=True,
+        )
+        return
+
+    filtres = [f"timeframe={timeframe}", f"stratégie={strategie}"]
+    filtre = " · ".join(f for f in filtres if "=None" not in f) or None
+
     async with session_scope() as session:
         repository = SignalRepository(session)
-        total = await repository.count_all()
-        par_statut = await repository.count_by_status()
-        par_action = await repository.count_by_action()
-        par_strategie = await repository.count_by_strategy()
+        total = await repository.count_all(timeframe=timeframe, strategy=strategie)
+        par_statut = await repository.count_by_status(timeframe=timeframe, strategy=strategie)
+        par_action = await repository.count_by_action(timeframe=timeframe, strategy=strategie)
+        par_strategie = await repository.count_by_strategy(timeframe=timeframe)
         paper_repository = PaperRepository(session)
-        paper = compute_stats(await paper_repository.closed_results())
+        paper = compute_stats(
+            await paper_repository.closed_results(timeframe=timeframe, strategy=strategie)
+        )
         ouvertes = await paper_repository.count_open()
     embed = build_stats_embed(
         total=total,
@@ -99,9 +129,15 @@ async def stats_command(interaction: discord.Interaction) -> None:
         par_strategie=par_strategie,
         paper=paper,
         ouvertes=ouvertes,
+        filtre=filtre,
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
-    logger.info("/stats invoqué par %s", interaction.user)
+    logger.info(
+        "/stats invoqué par %s timeframe=%s strategie=%s",
+        interaction.user,
+        timeframe,
+        strategie,
+    )
 
 
 @app_commands.command(name="strategy", description="Stratégies enregistrées")

@@ -142,52 +142,101 @@ class SignalRepository:
         return await self._session.get(Signal, signal_id)
 
     # --- Phase 20 : lectures pour les commandes Discord ---
+    # --- Phase 23 : filtres optionnels timeframe / stratégie ---
 
-    async def get_latest(self, limit: int = 10) -> list[tuple[Signal, str]]:
+    def _filtered(
+        self,
+        stmt,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ):
+        """Applique les filtres optionnels (multi-timeframe / multi-stratégie)."""
+        if strategy is not None:
+            stmt = stmt.join(Strategy, Signal.strategy_id == Strategy.id).where(
+                Strategy.name == strategy
+            )
+        if timeframe is not None:
+            stmt = stmt.where(Signal.timeframe == timeframe)
+        return stmt
+
+    async def get_latest(
+        self,
+        limit: int = 10,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ) -> list[tuple[Signal, str]]:
         """Derniers signaux reçus, du plus récent au plus ancien.
 
         Retourne (signal, nom de la stratégie) pour l'affichage.
         """
-        stmt = (
-            select(Signal, Strategy.name)
-            .join(Strategy, Signal.strategy_id == Strategy.id)
-            .order_by(Signal.received_at.desc(), Signal.id.desc())
-            .limit(limit)
-        )
+        stmt = self._filtered(
+            select(Signal, Strategy.name).join(
+                Strategy, Signal.strategy_id == Strategy.id
+            ),
+            timeframe=timeframe,
+            strategy=strategy,
+        ).order_by(Signal.received_at.desc(), Signal.id.desc()).limit(limit)
         rows = (await self._session.execute(stmt)).all()
         return [(signal, name) for signal, name in rows]
 
-    async def count_all(self) -> int:
-        """Nombre total de signaux stockés."""
-        return await self._session.scalar(select(func.count()).select_from(Signal)) or 0
+    async def count_all(
+        self,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ) -> int:
+        """Nombre total de signaux stockés (filtrable)."""
+        stmt = self._filtered(
+            select(func.count()).select_from(Signal),
+            timeframe=timeframe,
+            strategy=strategy,
+        )
+        return await self._session.scalar(stmt) or 0
 
-    async def count_by_status(self) -> dict[str, int]:
-        """Effectifs par statut (SENT, ERROR, ...)."""
-        rows = (
-            await self._session.execute(
-                select(Signal.status, func.count()).group_by(Signal.status)
-            )
-        ).all()
+    async def count_by_status(
+        self,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ) -> dict[str, int]:
+        """Effectifs par statut (SENT, ERROR, ...), filtrable."""
+        stmt = self._filtered(
+            select(Signal.status, func.count()),
+            timeframe=timeframe,
+            strategy=strategy,
+        ).group_by(Signal.status)
+        rows = (await self._session.execute(stmt)).all()
         return {status: count for status, count in rows}
 
-    async def count_by_action(self) -> dict[str, int]:
-        """Effectifs par action (BUY/SELL)."""
-        rows = (
-            await self._session.execute(
-                select(Signal.action, func.count()).group_by(Signal.action)
-            )
-        ).all()
+    async def count_by_action(
+        self,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ) -> dict[str, int]:
+        """Effectifs par action (BUY/SELL), filtrable."""
+        stmt = self._filtered(
+            select(Signal.action, func.count()),
+            timeframe=timeframe,
+            strategy=strategy,
+        ).group_by(Signal.action)
+        rows = (await self._session.execute(stmt)).all()
         return {action: count for action, count in rows}
 
-    async def count_by_strategy(self) -> dict[str, int]:
-        """Effectifs par nom de stratégie."""
-        rows = (
-            await self._session.execute(
-                select(Strategy.name, func.count(Signal.id))
-                .join(Signal, Signal.strategy_id == Strategy.id)
-                .group_by(Strategy.name)
-            )
-        ).all()
+    async def count_by_strategy(
+        self,
+        *,
+        timeframe: str | None = None,
+    ) -> dict[str, int]:
+        """Effectifs par nom de stratégie, filtrable par timeframe."""
+        stmt = select(Strategy.name, func.count(Signal.id)).join(
+            Signal, Signal.strategy_id == Strategy.id
+        )
+        if timeframe is not None:
+            stmt = stmt.where(Signal.timeframe == timeframe)
+        rows = (await self._session.execute(stmt.group_by(Strategy.name))).all()
         return {name: count for name, count in rows}
 
 
@@ -243,13 +292,25 @@ class PaperRepository:
             )
         )
 
-    async def closed_results(self) -> list[Decimal]:
-        """Résultats (en R) de toutes les positions clôturées, par ordre chronologique."""
+    async def closed_results(
+        self,
+        *,
+        timeframe: str | None = None,
+        strategy: str | None = None,
+    ) -> list[Decimal]:
+        """Résultats (en R) des positions clôturées, filtrable (Phase 23)."""
         stmt = (
             select(PaperPosition.result_r)
+            .join(Signal, PaperPosition.signal_id == Signal.id)
             .where(PaperPosition.status == "CLOSED", PaperPosition.result_r.is_not(None))
-            .order_by(PaperPosition.closed_at)
         )
+        if strategy is not None:
+            stmt = stmt.join(Strategy, Signal.strategy_id == Strategy.id).where(
+                Strategy.name == strategy
+            )
+        if timeframe is not None:
+            stmt = stmt.where(Signal.timeframe == timeframe)
+        stmt = stmt.order_by(PaperPosition.closed_at)
         return list((await self._session.scalars(stmt)).all())
 
     async def count_open(self) -> int:
