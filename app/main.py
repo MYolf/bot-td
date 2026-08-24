@@ -9,6 +9,9 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
 # Windows : psycopg async exige un SelectorEventLoop (uvicorn choisirait sinon
 # le ProactorEventLoop par défaut, incompatible). À faire avant toute création
 # de loop, donc au moment de l'import.
@@ -23,8 +26,6 @@ def selector_loop() -> asyncio.SelectorEventLoop:
     (uvicorn force sinon un ProactorEventLoop sur Windows, incompatible psycopg).
     """
     return asyncio.SelectorEventLoop()
-
-from fastapi import FastAPI
 
 from app.api.tradingview import router as tradingview_router
 from app.config.settings import get_settings
@@ -89,6 +90,17 @@ app = FastAPI(
 )
 
 app.include_router(tradingview_router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Phase 18 : toute exception non gérée => 500 + log ERROR.
+
+    Réponse générique sans détail d'exception (jamais de stacktrace ni de
+    secret côté client) ; le détail complet va dans les logs serveur.
+    """
+    logger.exception("Exception non gérée path=%s : %s", request.url.path, type(exc).__name__)
+    return JSONResponse(status_code=500, content={"status": "error", "error": "internal_error"})
 
 
 @app.get("/health")

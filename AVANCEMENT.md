@@ -55,11 +55,26 @@
   - Conditions sur bougies fermées uniquement ; commission 0.1 % + slippage 2 ticks actifs dès le backtest
   - Validation en conditions réelles à faire en Phase 16-17 (alerte "Once Per Bar Close", comparaison Replay/historique)
 - **Tests : 55/55 passent** (`pytest`, inchangés — le Pine se valide dans TradingView)
+- **Phase 18 — Gestion des erreurs**
+  - Codes HTTP alignés sur la règle TradingView : rejets métiers (symbole non autorisé, SL/TP incohérents, signal expiré...) en **200 + statut `rejected`** avec raison (TradingView traite un non-2xx comme un échec de l'alerte) ; secret invalide 401, JSON invalide 422, DB indisponible **500** (loggé avec tout le contexte métier, jamais le secret)
+  - Handler d'exceptions global (`app/main.py`) : toute exception non gérée → 500 générique `internal_error` (aucun détail/stacktrace côté client, tout dans les logs serveur)
+  - Tests : DB indisponible (500 + loggué), exception inattendue (handler global), secret webhook / token Discord / mot de passe DB jamais présents dans les logs (chemins 401, rejet, succès, 500)
+- **Phase 19 — Logs**
+  - Format déjà conforme (`app/utils/logging.py`, Phase 4) : `2026-08-22 22:14:03 INFO ...`, logger par module, niveau via `LOG_LEVEL`, bibliothèques tierces réduites au WARNING
+  - Chaque étape du pipeline loggue avec contexte (received/validated/rejected/duplicated/stored/notified/error) — vérifié par les tests Phase 18
+- **Phase 20 — Commandes Discord** (les cinq, toutes en `ephemeral`)
+  - `/status` : Bot / Database (ping SQL réel `SELECT 1` → ONLINE/OFFLINE) / Webhook / Environment — format Projet.md §30
+  - `/lastsignal` : dernier signal en embed (réutilise le format des signaux), message simple si aucun
+  - `/signals limite:1-10 (défaut 5)` : liste compacte des derniers signaux (emoji, symbole, stratégie, timeframe, date UTC, statut)
+  - `/stats` : total, par action, par statut, par stratégie (les stats de performance en R arrivent avec le paper trading, Phase 21)
+  - `/strategy` : stratégies enregistrées (état actif/désactivé, version, nombre de signaux)
+  - Lectures 100 % via le repository (`get_latest`, `count_all`, `count_by_*`, `list_all`) — jamais de SQL inline ; erreurs des commandes gérées par le handler global du bot (Phase 3)
+- **Tests : 68/68 passent** (`pytest`)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte)
-- **Phase 18+** — Error handling, logging, commandes Discord, paper trading, production
+- **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
+- **Phase 21+** — Paper trading, multi-assets/timeframes/stratégies, tests complets, Docker, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 

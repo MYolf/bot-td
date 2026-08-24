@@ -20,16 +20,21 @@ def bot(test_settings: Settings) -> SignalBot:
 
 
 class TestBuildStatus:
-    """La réponse de /status doit être exactement au format de Projet.md §9."""
+    """La réponse de /status doit être exactement au format de Projet.md §30."""
 
-    def test_format_exact(self):
-        content = bot_commands.build_status_content("development", "connected")
+    def test_format_exact_db_en_ligne(self):
+        content = bot_commands.build_status_content("development", True)
         assert content == (
-            "🟢 Bot opérationnel\n"
-            "Environment: development\n"
-            "Database: connected\n"
-            "Discord: connecté"
+            "🟢 Bot: ONLINE\n"
+            "Database: ONLINE\n"
+            "Webhook: ONLINE\n"
+            "Environment: DEVELOPMENT"
         )
+
+    def test_format_db_hors_ligne(self):
+        content = bot_commands.build_status_content("production", False)
+        assert "Database: OFFLINE" in content
+        assert "Environment: PRODUCTION" in content
 
 
 class TestCreationBot:
@@ -52,12 +57,12 @@ class FakeResponse:
     def __init__(self):
         self.sent: list[dict] = []
 
-    async def send_message(self, content: str, ephemeral: bool = False):
-        self.sent.append({"content": content, "ephemeral": ephemeral})
+    async def send_message(self, content: str | None = None, *, embed=None, ephemeral: bool = False):
+        self.sent.append({"content": content, "embed": embed, "ephemeral": ephemeral})
 
 
 class FakeInteraction:
-    """Interaction factice : seul ce dont /status a besoin."""
+    """Interaction factice : seul ce dont les commandes ont besoin."""
 
     def __init__(self, settings: Settings):
         self.client = type("FakeClient", (), {"bot_settings": settings})()
@@ -66,15 +71,31 @@ class FakeInteraction:
 
 
 class TestStatusCommand:
-    async def test_reponse_ephemeral_au_format_attendu(self, test_settings: Settings):
+    async def test_reponse_ephemeral_au_format_attendu(self, test_settings: Settings, monkeypatch):
+        async def ping_ok() -> bool:
+            return True
+
+        monkeypatch.setattr(bot_commands, "ping_database", ping_ok)
         interaction = FakeInteraction(test_settings)
         await bot_commands.status_command.callback(interaction)  # type: ignore[attr-defined]
         (appel,) = interaction.response.sent
         assert appel["ephemeral"] is True
-        assert appel["content"].startswith("🟢 Bot opérationnel")
-        assert "Environment: development" in appel["content"]
-        assert "Database: non configurée" in appel["content"]
-        assert "Discord: connecté" in appel["content"]
+        assert appel["content"] == (
+            "🟢 Bot: ONLINE\n"
+            "Database: ONLINE\n"
+            "Webhook: ONLINE\n"
+            "Environment: DEVELOPMENT"
+        )
+
+    async def test_db_indisponible_affichee_honnetement(self, test_settings: Settings, monkeypatch):
+        async def ping_ko() -> bool:
+            return False
+
+        monkeypatch.setattr(bot_commands, "ping_database", ping_ko)
+        interaction = FakeInteraction(test_settings)
+        await bot_commands.status_command.callback(interaction)  # type: ignore[attr-defined]
+        (appel,) = interaction.response.sent
+        assert "Database: OFFLINE" in appel["content"]
 
 
 class TestRunBotErreurs:

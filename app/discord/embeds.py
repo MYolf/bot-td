@@ -83,3 +83,103 @@ def build_signal_embed(
         inline=True,
     )
     return embed
+
+
+# --- Phase 20 : embeds des commandes slash ---
+
+BLUE = 0x3498DB  # listes
+PURPLE = 0x9B59B6  # statistiques
+GREY = 0x95A5A6  # stratégies
+
+
+def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
+    """Embed d'un signal chargé depuis la base (commandes /lastsignal, /signals).
+
+    Le paramètre `signal` est un `app.database.models.Signal` (typage en str
+    pour éviter une dépendance circulaire embeds -> models).
+    """
+    return build_signal_embed(
+        action=signal.action,
+        symbol=signal.symbol,
+        strategy=strategy_name,
+        timeframe=signal.timeframe,
+        entry_price=signal.entry_price,
+        stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit,
+        risk_reward=signal.risk_reward,
+        signal_time=signal.signal_timestamp,
+    )
+
+
+def build_signals_list_embed(rows: list) -> discord.Embed:
+    """Liste compacte des derniers signaux (commande /signals).
+
+    `rows` : liste de tuples (Signal, nom de stratégie) fournie par
+    `SignalRepository.get_latest`.
+    """
+    embed = discord.Embed(title="📋 Derniers signaux", color=BLUE)
+    lines = []
+    for signal, strategy_name in rows:
+        emoji = "🟢" if signal.action == "BUY" else "🔴"
+        moment = _as_utc(signal.signal_timestamp).strftime("%d/%m %H:%M UTC")
+        lines.append(
+            f"{emoji} **{signal.symbol}** · {strategy_label(strategy_name)} "
+            f"· {timeframe_label(signal.timeframe)} · {moment} · {signal.status}"
+        )
+    embed.description = "\n".join(lines)
+    return embed
+
+
+def build_stats_embed(
+    *,
+    total: int,
+    par_statut: dict[str, int],
+    par_action: dict[str, int],
+    par_strategie: dict[str, int],
+) -> discord.Embed:
+    """Statistiques des signaux stockés (commande /stats).
+
+    Les statistiques de performance en R (win rate, total R) arrivent avec le
+    paper trading (Phase 21) ; ici : volumétrie des signaux.
+    """
+    embed = discord.Embed(title="📊 Statistiques des signaux", color=PURPLE)
+    embed.add_field(name="Total", value=str(total), inline=True)
+    embed.add_field(
+        name="Par action",
+        value="\n".join(f"{k}: {v}" for k, v in sorted(par_action.items())) or "—",
+        inline=True,
+    )
+    embed.add_field(
+        name="Par statut",
+        value="\n".join(f"{k}: {v}" for k, v in sorted(par_statut.items())) or "—",
+        inline=True,
+    )
+    embed.add_field(
+        name="Par stratégie",
+        value="\n".join(
+            f"{strategy_label(k)}: {v}" for k, v in sorted(par_strategie.items())
+        )
+        or "—",
+        inline=False,
+    )
+    return embed
+
+
+def build_strategies_embed(strategies: list, compte: dict[str, int]) -> discord.Embed:
+    """Stratégies enregistrées (commande /strategy).
+
+    `strategies` : liste de `app.database.models.Strategy` ; `compte` :
+    effectifs de signaux par nom de stratégie.
+    """
+    embed = discord.Embed(title="🧭 Stratégies", color=GREY)
+    if not strategies:
+        embed.description = "Aucune stratégie enregistrée."
+        return embed
+    for strategy in strategies:
+        etat = "✅ active" if strategy.enabled else "⛔ désactivée"
+        embed.add_field(
+            name=strategy_label(strategy.name),
+            value=f"{etat}\nVersion : {strategy.version}\nSignaux : {compte.get(strategy.name, 0)}",
+            inline=True,
+        )
+    return embed

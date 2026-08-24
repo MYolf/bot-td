@@ -30,7 +30,7 @@ def test_health(client):
 
 def test_webhook_valid_buy(client):
     response = client.post("/webhook/tradingview", json=_valid_payload())
-    assert response.status_code == 202
+    assert response.status_code == 200
     body = response.json()
     assert body["status"] == "sent"
     assert body["signal_id"] == 1
@@ -42,7 +42,7 @@ def test_webhook_valid_sell(client):
     payload["stop_loss"] = "105200.00"
     payload["take_profit"] = "103200.00"
     response = client.post("/webhook/tradingview", json=payload)
-    assert response.status_code == 202
+    assert response.status_code == 200
 
 
 def test_webhook_invalid_secret(client):
@@ -89,4 +89,4 @@ def test_webhook_timeframe_normalized(client):
     payload = _valid_payload()
     payload["timeframe"] = "1H"
     response = client.post("/webhook/tradingview", json=payload)
-    assert response.status_code == 202
+    assert response.status_code == 200

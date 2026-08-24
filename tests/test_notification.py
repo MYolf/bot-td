@@ -37,7 +37,7 @@ class TestPipelineNotification:
     def test_signal_valide_stocke_puis_notifie(self, client):
         response = client.post("/webhook/tradingview", json=_payload())
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         assert response.json()["status"] == "sent"
         # Un seul embed envoyé
         assert len(client.notifier.sent) == 1
@@ -53,7 +53,7 @@ class TestPipelineNotification:
         response = client.post("/webhook/tradingview", json=_payload())
 
         # Le signal est stocké mais pas notifié : il reste en base (ERROR).
-        assert response.status_code == 202
+        assert response.status_code == 200
         assert response.json()["status"] == "stored_not_notified"
         assert len(client.notifier.sent) == 0
         (signal,) = _signals(client)
@@ -78,6 +78,8 @@ class TestPipelineNotification:
         payload["symbol"] = "DOGEUSDT"  # hors liste blanche
         response = client.post("/webhook/tradingview", json=payload)
 
-        assert response.status_code == 400
+        # Rejet métier : 200 + statut explicite (TradingView attend un 2xx).
+        assert response.status_code == 200
+        assert response.json()["status"] == "rejected"
         assert len(client.notifier.sent) == 0
         assert _signals(client) == []

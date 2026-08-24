@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -77,3 +78,19 @@ def provide_session_factory() -> async_sessionmaker[AsyncSession]:
     brancher un SQLite async en mémoire.
     """
     return get_session_factory()
+
+
+async def ping_database() -> bool:
+    """Vérifie que la base répond (commande /status, Phase 20).
+
+    Une requête triviale (SELECT 1) : tout échec => False, jamais d'exception
+    remontée à la commande.
+    """
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        logger.warning("Ping base de données échoué (indisponible ?)")
+        return False

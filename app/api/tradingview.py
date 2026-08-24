@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tradingview"])
 
 
-@router.post("/webhook/tradingview", status_code=202)
+@router.post("/webhook/tradingview", status_code=200)
 async def receive_tradingview_signal(
     signal: TradingViewSignal,
     response: Response,
@@ -52,6 +52,8 @@ async def receive_tradingview_signal(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     # --- Phases 8-9 : validation métier et cohérence ---
+    # Rejet métier : 200 + statut REJECTED (TradingView traite un non-2xx
+    # comme un échec de l'alerte ; un rejet est un cas normal, pas une erreur).
     result = validate_signal(signal, settings)
     if not result.valid:
         logger.warning(
@@ -62,7 +64,7 @@ async def receive_tradingview_signal(
             signal.timeframe,
             signal.action,
         )
-        raise HTTPException(status_code=400, detail={"error": "signal_rejected", "reason": result.reason})
+        return {"status": "rejected", "reason": result.reason}
 
     logger.info("Signal validated strategy=%s symbol=%s action=%s", signal.strategy, signal.symbol, signal.action)
 
@@ -82,7 +84,7 @@ async def receive_tradingview_signal(
         raise
     except Exception:
         # Erreur base de données : on logge tout le contexte métier (jamais le
-        # secret) pour ne rien perdre, et on répond 503 à TradingView.
+        # secret) pour ne rien perdre, et on répond 500 à TradingView.
         logger.exception(
             "Erreur base de données signal strategy=%s symbol=%s timeframe=%s action=%s price=%s sl=%s tp=%s timestamp=%s",
             signal.strategy,
@@ -94,7 +96,7 @@ async def receive_tradingview_signal(
             signal.take_profit,
             signal.timestamp.isoformat(),
         )
-        response.status_code = 503
+        response.status_code = 500
         return {"status": "error", "error": "database_unavailable"}
 
     if insert.duplicate:

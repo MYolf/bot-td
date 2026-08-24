@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,13 @@ class StrategyRepository:
             await self._session.flush()
             logger.info("Stratégie créée name=%s", name)
         return strategy
+
+    async def list_all(self) -> list[Strategy]:
+        """Toutes les stratégies (commande /strategy, Phase 20)."""
+        result = await self._session.scalars(
+            select(Strategy).order_by(Strategy.name)
+        )
+        return list(result)
 
 
 class SignalRepository:
@@ -133,3 +140,52 @@ class SignalRepository:
     async def get(self, signal_id: int) -> Signal | None:
         """Charge un signal par id (commandes Discord, re-notification)."""
         return await self._session.get(Signal, signal_id)
+
+    # --- Phase 20 : lectures pour les commandes Discord ---
+
+    async def get_latest(self, limit: int = 10) -> list[tuple[Signal, str]]:
+        """Derniers signaux reçus, du plus récent au plus ancien.
+
+        Retourne (signal, nom de la stratégie) pour l'affichage.
+        """
+        stmt = (
+            select(Signal, Strategy.name)
+            .join(Strategy, Signal.strategy_id == Strategy.id)
+            .order_by(Signal.received_at.desc(), Signal.id.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(signal, name) for signal, name in rows]
+
+    async def count_all(self) -> int:
+        """Nombre total de signaux stockés."""
+        return await self._session.scalar(select(func.count()).select_from(Signal)) or 0
+
+    async def count_by_status(self) -> dict[str, int]:
+        """Effectifs par statut (SENT, ERROR, ...)."""
+        rows = (
+            await self._session.execute(
+                select(Signal.status, func.count()).group_by(Signal.status)
+            )
+        ).all()
+        return {status: count for status, count in rows}
+
+    async def count_by_action(self) -> dict[str, int]:
+        """Effectifs par action (BUY/SELL)."""
+        rows = (
+            await self._session.execute(
+                select(Signal.action, func.count()).group_by(Signal.action)
+            )
+        ).all()
+        return {action: count for action, count in rows}
+
+    async def count_by_strategy(self) -> dict[str, int]:
+        """Effectifs par nom de stratégie."""
+        rows = (
+            await self._session.execute(
+                select(Strategy.name, func.count(Signal.id))
+                .join(Signal, Signal.strategy_id == Strategy.id)
+                .group_by(Strategy.name)
+            )
+        ).all()
+        return {name: count for name, count in rows}

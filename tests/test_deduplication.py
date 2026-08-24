@@ -169,9 +169,9 @@ class TestWebhookDeduplication:
         premier = client.post("/webhook/tradingview", json=payload)
         second = client.post("/webhook/tradingview", json=payload)
 
-        assert premier.status_code == 202
+        assert premier.status_code == 200
         assert premier.json()["status"] == "sent"
-        assert second.status_code == 202
+        assert second.status_code == 200
         assert second.json()["status"] == "duplicate"
 
     def test_deux_signaux_differents_acceptes(self, client):
