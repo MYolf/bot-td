@@ -93,11 +93,23 @@
   - Embed Discord : champ **"Signal Score : 55/100"** uniquement si des composantes sont envoyées, avec footer *"qualité interne du signal (pas une probabilité de gain)"* — exigence §40 : jamais présenté comme une probabilité
   - Pine : composantes **graduées** (séparation EMA, force RSI, expansion MACD, séparation 4H pour MTF) ajoutées à l'`alert_message` des deux stratégies — valeurs de clôture uniquement, anti-repainting inchangé
   - Tests (14 nouveaux, **118/118 passent**) : total/100, composantes absentes = 0, bornes (trop grand/négatif rejetés, max exact accepté), stockage en base, score NULL sans composante, affichage embed (avec et sans), déduplication inchangée, coercition des chaînes, `/lastsignal` recharge le score
+- **Phase 27 — Tests automatisés** : audit du catalogue obligatoire Projet.md §41 contre la suite existante (déjà test-driven depuis la Phase 4), puis comblement des trous
+  - Audit — tout le catalogue §41 était couvert SAUF trois chemins testés seulement au niveau unitaire (validator) et pas en bout en bout via le webhook :
+    | Cas §41 | Couverture |
+    |---|---|
+    | Webhook valide/invalide, secret invalide, JSON invalide, BUY/SELL valides | `test_webhook.py` (existant) |
+    | BUY/SELL SL incorrect, TP incorrect, timestamp expiré | `test_validation.py` (unitaire) + **e2e ajouté** |
+    | Signal doublon (une seule notification, une seule ligne) | `test_deduplication.py` + `test_notification.py` |
+    | Database failure (500 + loggué, secret jamais loggé) | `test_error_handling.py` |
+    | Discord failure (signal conservé en ERROR) | `test_notification.py` |
+    | Paper trade BUY/SELL, TP atteint (+RR), SL atteint (−1R) | `test_paper_trading.py` |
+  - Ajouts dans `test_webhook.py` (7 tests) : **secret absent/vide → 422** ; **timestamp expiré e2e** (200 + `rejected` + rien en base + aucune notification) ; **incohérences SL/TP e2e** paramétrées (BUY/SELL × SL/TP → `incoherent_stop_loss`/`incoherent_take_profit`, rien stocké)
+  - **125/125 tests passent** ; `pytest` vert = prérequis de déploiement respecté
 
 ## 🔧 En cours / à venir (par Claude)
 
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 27+** — Tests complets, Docker, migrations, production
+- **Phase 28+** — Docker, migrations, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
