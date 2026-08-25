@@ -4,11 +4,12 @@
 
 ## 📍 Point d'avancement (2026-08-25)
 
-- **Phases terminées** : 0-15, 18-27 (28 phases sur 30)
+- **Phases terminées** : 0-15, 18-28 (29 phases sur 30)
 - **Tests** : **125/125 passent** (`pytest`)
-- **Reste à faire (Claude)** : Phase 28 (Docker), Phase 29 (migrations), Phase 30 (production)
+- **Reste à faire (Claude)** : Phase 29 (migrations), Phase 30 (production)
 - **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) et vérifications manuelles dans TradingView — voir la section 👤 ci-dessous
-- Pipeline opérationnel en local : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
+- Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
+- Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
 
 ## ✅ Terminé (par Claude)
 
@@ -113,10 +114,16 @@
     | Paper trade BUY/SELL, TP atteint (+RR), SL atteint (−1R) | `test_paper_trading.py` |
   - Ajouts dans `test_webhook.py` (7 tests) : **secret absent/vide → 422** ; **timestamp expiré e2e** (200 + `rejected` + rien en base + aucune notification) ; **incohérences SL/TP e2e** paramétrées (BUY/SELL × SL/TP → `incoherent_stop_loss`/`incoherent_take_profit`, rien stocké)
   - **125/125 tests passent** ; `pytest` vert = prérequis de déploiement respecté
+- **Phase 28 — Docker** (Projet.md §42)
+  - `Dockerfile` : `python:3.12-slim`, dépendances en couche cachée, utilisateur non-root, `EXPOSE 8000` ; démarrage = `alembic upgrade head` puis `uvicorn` (le schéma est toujours appliqué par migration, jamais directement)
+  - `.dockerignore` : `.env`, `.venv`, `tests/`, `.git`... **aucun secret n'entre dans l'image**
+  - `docker-compose.yml` : services `app` + `postgres` (conforme §42) ; `env_file: .env` pour les secrets, `DATABASE_URL` surchargé vers `postgres:5432` (dans le conteneur, `localhost` ne désigne plus la base ; l'env réelle prime sur le `.env` pour pydantic-settings) ; `depends_on` sur le healthcheck PostgreSQL, `restart: unless-stopped`, healthcheck app sur `/health`
+  - Service `db` renommé `postgres` (ancien conteneur recréé via `--remove-orphans`, **données conservées** dans le volume `postgres_data`)
+  - Vérifié manuellement : `docker compose up -d --build` → 2 conteneurs healthy, migrations appliquées au démarrage, bot Discord connecté depuis le conteneur, `GET /health` → 200, webhook avec mauvais secret → 401
+  - Tests : **125/125 passent** (inchangés — l'infrastructure ne touche pas au code)
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 28 — Docker** : Dockerfile de l'application + docker-compose complet (app + PostgreSQL)
 - **Phase 29 — Migrations** : procédure de migration de base (backup, upgrade, rollback)
 - **Phase 30 — Production** : durcissement final, déploiement, supervision
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)

@@ -1,9 +1,35 @@
-# Infrastructure de développement : PostgreSQL (Phase 11).
-# Les identifiants correspondent au DATABASE_URL du fichier .env :
-# postgresql+psycopg://bot_td:bot_td_dev_password@localhost:5432/bot_td
+# Infrastructure complète (Phase 28) : API + bot Discord (app) et PostgreSQL.
+#
+# Démarrage : docker compose up -d --build
+#
+# Secrets : le fichier .env (DISCORD_BOT_TOKEN, TRADINGVIEW_WEBHOOK_SECRET...)
+# est passé au service app via env_file ; il n'est jamais copié dans l'image
+# (voir .dockerignore). DATABASE_URL est surchargé ici pour pointer vers le
+# service postgres (dans le conteneur, "localhost" ne désigne plus la base).
+# Les identifiants ci-dessous sont des identifiants de développement,
+# cohérents avec le DATABASE_URL du .env local.
 
 services:
-  db:
+  app:
+    build: .
+    container_name: bot-td-app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://bot_td:bot_td_dev_password@postgres:5432/bot_td
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
     image: postgres:16
     container_name: bot-td-postgres
     environment:
@@ -19,6 +45,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
 volumes:
   postgres_data:

@@ -1,0 +1,21 @@
+# Exclusions de build : rien de ce qui suit ne doit entrer dans l'image.
+# En particulier .env (secrets) et .venv.
+
+.env
+.env.*
+!.env.example
+.venv/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+docs/
+pine/
+AVANCEMENT.md
+Projet.md
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
