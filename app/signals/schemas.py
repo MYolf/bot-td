@@ -23,6 +23,16 @@ class TradingViewSignal(BaseModel):
     stop_loss: float = Field(gt=0)
     take_profit: float = Field(gt=0)
     timestamp: datetime
+    # --- Phase 26 : composantes optionnelles du score de qualité (§40) ---
+    # Chaque composante est un nombre de points (0 au maximum du barème,
+    # voir app/signals/scoring.py) ; absente = la stratégie ne l'évalue pas.
+    # TradingView les envoie sous forme de chaînes : coercition automatique.
+    score_trend: int | None = None
+    score_momentum: int | None = None
+    score_macd: int | None = None
+    score_volume: int | None = None
+    score_structure: int | None = None
+    score_htf: int | None = None
 
     @field_validator("strategy", "symbol", "exchange", "timeframe", mode="after")
     @classmethod

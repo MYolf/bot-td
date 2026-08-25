@@ -86,11 +86,18 @@
   - Backend inchangé (Phases 22-24 : multi-TF/stratégies par configuration) ; `momentum_mtf_v1` ajoutée à la liste blanche par défaut (`settings.py`, `.env.example`)
   - Cahier des charges complet documenté en tête du fichier Pine (conforme au skill strategy-design)
   - Tests : JSON exact de la stratégie accepté sur tout le pipeline (stocké + notifié + position paper) ; les 3 niveaux (240/60/15) coexistent sans collision de déduplication — **104/104 passent**
+- **Phase 26 — Score de qualité du signal** (Projet.md §40)
+  - Barème centralisé dans `app/signals/scoring.py` : trend /20, momentum /20, MACD /15, volume /15, structure /20, HTF /10 (somme = 100) ; composantes **optionnelles** — une stratégie n'envoie que ce qu'elle évalue
+  - Le total est **calculé côté backend** (même principe que le Risk/Reward : le client ne fixe jamais le total lui-même) ; hors bornes => rejet métier `invalid_score` (200 + raison, cohérent Phase 18)
+  - Schéma : 6 champs `score_*` optionnels (coercition str→int, TradingView envoie du texte) ; colonne `signals.score` nullable (NULL = aucun score), migration Alembic `a1f4c8e27b91` appliquée sur la base dev
+  - Embed Discord : champ **"Signal Score : 55/100"** uniquement si des composantes sont envoyées, avec footer *"qualité interne du signal (pas une probabilité de gain)"* — exigence §40 : jamais présenté comme une probabilité
+  - Pine : composantes **graduées** (séparation EMA, force RSI, expansion MACD, séparation 4H pour MTF) ajoutées à l'`alert_message` des deux stratégies — valeurs de clôture uniquement, anti-repainting inchangé
+  - Tests (14 nouveaux, **118/118 passent**) : total/100, composantes absentes = 0, bornes (trop grand/négatif rejetés, max exact accepté), stockage en base, score NULL sans composante, affichage embed (avec et sans), déduplication inchangée, coercition des chaînes, `/lastsignal` recharge le score
 
 ## 🔧 En cours / à venir (par Claude)
 
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 26+** — Scoring, tests complets, Docker, migrations, production
+- **Phase 27+** — Tests complets, Docker, migrations, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
@@ -124,3 +131,4 @@ Rien de bloquant pour les phases 14-15 ✅ (app Discord créée, bot invité, Do
   curl -X POST http://localhost:8000/webhook/tradingview -H "Content-Type: application/json" \
     -d '{"secret":"MON_SECRET","strategy":"momentum_v1","symbol":"BTCUSDT","exchange":"BINANCE","timeframe":"15","action":"BUY","price":104532.42,"stop_loss":103800,"take_profit":106000,"timestamp":"<heure UTC actuelle>"}'
   ```
+- Vérification manuelle Phase 26 : même curl avec `"score_trend":"20","score_momentum":"10","score_macd":"8"` en plus → l'embed Discord doit afficher **Signal Score : 38/100** (et rien si les composantes sont omises) ; Pine : recoller `pine/momentum_v1.pine` / `pine/momentum_mtf_v1.pine` mis à jour dans TradingView (alert_message enrichi du score)

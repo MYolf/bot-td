@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.config.settings import Settings
+from app.signals.scoring import SCORE_COMPONENT_MAX
 from app.signals.schemas import TradingViewSignal
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,12 @@ def validate_signal(signal: TradingViewSignal, settings: Settings) -> Validation
         return ValidationResult(False, "invalid_exchange")
     if signal.timeframe not in settings.allowed_timeframes:
         return ValidationResult(False, "invalid_timeframe")
+
+    # --- Phase 26 : bornes du score de qualité (barème §40) ---
+    for field, max_points in SCORE_COMPONENT_MAX.items():
+        value = getattr(signal, field)
+        if value is not None and not 0 <= value <= max_points:
+            return ValidationResult(False, "invalid_score")
 
     # --- Phase 9 : cohérence des prix ---
     if signal.action == "BUY":

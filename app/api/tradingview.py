@@ -22,6 +22,7 @@ from app.database.repository import SignalRepository, StrategyRepository, comput
 from app.discord.embeds import build_signal_embed
 from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import DiscordSendError, SignalNotifier, provide_notifier
+from app.signals.scoring import compute_score
 from app.signals.schemas import TradingViewSignal
 from app.signals.validator import validate_signal
 
@@ -139,6 +140,7 @@ async def receive_tradingview_signal(
         take_profit=signal.take_profit,
         risk_reward=compute_risk_reward(signal),
         signal_time=signal.timestamp,
+        score=compute_score(signal),
     )
     try:
         message_id = await notifier.send_signal(embed)

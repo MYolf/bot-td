@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Numeric,
+    SmallInteger,
     String,
     func,
 )
@@ -68,6 +69,9 @@ class Signal(Base):
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(20, 8))
     take_profit: Mapped[Decimal] = mapped_column(Numeric(20, 8))
     risk_reward: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    # Score de qualité (Phase 26) : NULL si la stratégie n'envoie aucune
+    # composante. Indicateur interne, jamais une probabilité de gain.
+    score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

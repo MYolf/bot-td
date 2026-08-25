@@ -64,8 +64,13 @@ def build_signal_embed(
     take_profit: Decimal | float | str,
     risk_reward: Decimal | float | str,
     signal_time: datetime,
+    score: int | None = None,
 ) -> discord.Embed:
-    """Construit l'embed d'un signal validé (BUY/SELL)."""
+    """Construit l'embed d'un signal validé (BUY/SELL).
+
+    `score` (Phase 26) : qualité interne du signal sur 100, affichée
+    uniquement si la stratégie en envoie les composantes.
+    """
     is_buy = action == "BUY"
     embed = discord.Embed(
         title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
@@ -84,6 +89,10 @@ def build_signal_embed(
         value=_as_utc(signal_time).strftime("%H:%M:%S UTC"),
         inline=True,
     )
+    if score is not None:
+        embed.add_field(name="Signal Score", value=f"{score}/100", inline=True)
+        # Projet.md §40 : jamais présenté comme une probabilité de gain.
+        embed.set_footer(text="Score = qualité interne du signal (pas une probabilité de gain)")
     return embed
 
 
@@ -110,6 +119,7 @@ def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
         take_profit=signal.take_profit,
         risk_reward=signal.risk_reward,
         signal_time=signal.signal_timestamp,
+        score=signal.score,
     )
 
 

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import PaperPosition, PaperTrade, Signal, Strategy
 from app.signals.deduplication import build_signal_uid
+from app.signals.scoring import compute_score
 from app.signals.schemas import TradingViewSignal
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ class SignalRepository:
             stop_loss=Decimal(str(signal.stop_loss)),
             take_profit=Decimal(str(signal.take_profit)),
             risk_reward=compute_risk_reward(signal),
+            score=compute_score(signal),
             signal_timestamp=signal.timestamp,
             received_at=datetime.now(timezone.utc),
             status="VALIDATED",

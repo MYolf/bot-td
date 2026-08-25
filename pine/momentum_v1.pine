@@ -70,6 +70,18 @@ allBearish = trendDown and rsiVal < rsiShortTh and macdBearish
 longCondition  = allBullish and not allBullish[1]
 shortCondition = allBearish and not allBearish[1]
 
+// --- Score de qualité (Phase 26) : composantes évaluées par CETTE stratégie ---
+// Barème projet : trend /20, momentum /20, MACD /15 (le backend totalise sur 100 ;
+// volume et structure ne sont pas évalués ici : composantes absentes = 0).
+// Valeurs de clôture uniquement (aucune bougie en cours) : pas de repainting.
+trendSep   = math.abs(emaFast / emaSlow - 1)
+scoreTrend = (trendUp and trendSep > 0.02) or (trendDown and trendSep > 0.02) ? 20 : 10
+rsiForce   = math.abs(rsiVal - 50)
+scoreMom   = rsiForce >= 15 ? 20 : 10
+macdHist   = macdLine - macdSignalLine
+macdExpand = math.abs(macdHist) > math.abs(macdHist[1])
+scoreMacd  = macdExpand ? 15 : 8
+
 // --- Construction du JSON pour le webhook (schéma exact du backend) ---
 // Nombres toujours via str.tostring ; timestamp UTC ISO 8601.
 buildAlertJson(action, entry, sl, tp) =>
@@ -82,6 +94,9 @@ buildAlertJson(action, entry, sl, tp) =>
      ',"price":"' + str.tostring(entry) + '"' +
      ',"stop_loss":"' + str.tostring(sl) + '"' +
      ',"take_profit":"' + str.tostring(tp) + '"' +
+     ',"score_trend":"' + str.tostring(scoreTrend) + '"' +
+     ',"score_momentum":"' + str.tostring(scoreMom) + '"' +
+     ',"score_macd":"' + str.tostring(scoreMacd) + '"' +
      ',"timestamp":"' + str.format_time(timenow, "yyyy-MM-dd'T'HH:mm:ss'Z'", "UTC") + '"}'
 
 // --- Ordres simulés : chaque entrée a TOUJOURS sa sortie (SL/TP) ---
