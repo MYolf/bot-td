@@ -7,7 +7,7 @@
 - **Phases terminées** : 0-15, 18-28 (29 phases sur 30)
 - **Tests** : **125/125 passent** (`pytest`)
 - **Reste à faire (Claude)** : Phase 29 (migrations), Phase 30 (production)
-- **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) et vérifications manuelles dans TradingView — voir la section 👤 ci-dessous
+- **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) — les stratégies sont vérifiées manuellement ✅ (voir la section 👤 ci-dessous)
 - Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
 - Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
 
@@ -132,22 +132,27 @@
 
 Rien de bloquant pour les phases 28-30 ✅ (app Discord créée, bot invité, Docker installé et fonctionnel, `.env` rempli). Les actions ci-dessous ne bloquent pas non plus la suite : elles concernent les **alertes réelles** et la **vérification manuelle des stratégies**.
 
-### ⏳ 1. Vérifier les stratégies dans TradingView (Phases 14-15, 25, 26)
+### ✅ 1. Vérifier les stratégies dans TradingView (Phases 14-15, 25, 26) — FAIT (2026-08-25, sur XAUUSD OANDA)
 
-**momentum_v1** (simple, TF unique) :
-1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_v1.pine` (version à jour : alert_message inclut le score) → **Add to chart**
-2. Symbole : BTCUSDT (BINANCE), timeframe 15m ou 60m
-3. Strategy Tester : backtest avec frais (déjà actifs), vérifier que chaque entrée a sa sortie (SL/TP)
+**momentum_v1** : collé dans le Pine Editor, affichage et Strategy Tester vérifiés —
+chaque entrée a sa sortie, SL sous l'entrée / TP au-dessus (LONG), SHORT inversé, frais
+et slippage actifs, aucune entrée orpheline. Deux points relevés et **tranchés** :
+- *Sorties hors SL/TP* : une position peut être fermée au marché par un signal opposé
+  (inversion de tendance). **Option A retenue** (garder) — décision documentée dans
+  l'en-tête de `pine/momentum_v1.pine`.
+- *SL/TP vs prix d'exécution réel* : SL/TP sont calculés depuis le `close` de la bougie
+  de signal ; le seul écart vient du slippage 2 ticks du backtest (volontaire, réalisme).
 
-**momentum_mtf_v1** (multi-timeframes) :
-1. Coller `pine/momentum_mtf_v1.pine` → **Add to chart**
-2. Symbole BTCUSDT (BINANCE), **timeframe du graphique : 15m** (le TF d'entrée ; 4H et 1H se règlent dans les paramètres de la stratégie)
-3. Vérifier que le script compile sans erreur et s'affiche (fond vert/rouge = tendance 4H, triangles = signaux)
-4. Vérifier visuellement : **aucun triangle ne va contre le fond** (règle de confluence de la Phase 25)
-5. Strategy Tester : backtest avec frais ; tester en Replay : les signaux historiques ne doivent **ni disparaître ni se déplacer** (anti-repainting)
-6. Si alerte réelle souhaitée : `"momentum_mtf_v1"` est déjà dans la liste blanche par défaut (rien à faire sauf si tu as surchargé `ALLOWED_STRATEGIES`)
+**momentum_mtf_v1** : graphique XAUUSD OANDA **15m** — compile, s'affiche, **aucun
+triangle contre le fond 4H** (règle de confluence Phase 25), List of Trades vérifiée.
+Anti-repainting validé par **audit statique du code** (le Replay complet est payant) :
+combo sûr `expression[1]` + `lookahead_on` sur les deux `request.security` (4H et 1H,
+dernière bougie fermée uniquement), `calc_on_every_tick=false`,
+`process_orders_on_close=true` — comportement identique historique/temps réel.
+**Test définitif en Phase 16** : comparaison alertes réelles vs triangles historiques.
 
-**Score (Phase 26)** : dans les deux Strategy Testers, le JSON d'alerte contient désormais `"score_trend"`, `"score_momentum"`, `"score_macd"` (+ `"score_htf"` pour MTF) — vérifiable via une alerte de test.
+**Score (Phase 26)** : à vérifier via l'alerte de test en Phase 16 (champs `score_*`
+dans le JSON `{{strategy.order.alert_message}}`).
 
 ### ⏳ 2. Phase 16 — créer l'alerte TradingView réelle
 1. Suivant la vérification ci-dessus : stratégie **Momentum V1** ou **Momentum MTF V1** sur le graphique

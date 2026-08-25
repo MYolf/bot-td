@@ -8,6 +8,11 @@
 // Le signal n'est émis qu'à la TRANSITION (conditions réunies maintenant mais
 // pas à la bougie précédente) : pas de spam d'alertes à chaque bougie.
 //
+// Sorties (décision validée en vérification manuelle) : chaque entrée pose
+// TOUJOURS son strategy.exit (SL/TP), mais une position peut aussi être fermée
+// au marché par un signal OPPOSÉ (inversion de tendance) — sortie volontaire,
+// plus rapide que d'attendre le SL en fin de tendance.
+//
 // Anti-repainting (Phase 15) — décisions :
 //  - calc_on_every_tick = false        : la stratégie ne se recalcule PAS en
 //                                         temps réel intra-bougie (comportement
