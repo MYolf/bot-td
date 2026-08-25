@@ -54,7 +54,12 @@ class Settings(BaseSettings):
         default=["5", "15", "30", "60", "240", "D"], alias="ALLOWED_TIMEFRAMES"
     )
     allowed_strategies: list[str] = Field(
-        default=["momentum_v1", "trend_following_v2", "gold_breakout_v1"],
+        default=[
+            "momentum_v1",
+            "momentum_mtf_v1",  # multi-timeframes (Phase 25)
+            "trend_following_v2",
+            "gold_breakout_v1",
+        ],
         alias="ALLOWED_STRATEGIES",
     )
     allowed_exchanges: list[str] = Field(

@@ -37,6 +37,8 @@ def test_settings_defaults_whitelists(monkeypatch):
     assert "BTCUSDT" in settings.allowed_symbols
     assert "15" in settings.allowed_timeframes
     assert "momentum_v1" in settings.allowed_strategies
+    # Phase 25 : la stratégie multi-timeframes est autorisée par défaut.
+    assert "momentum_mtf_v1" in settings.allowed_strategies
 
 
 def test_settings_whitelists_configurable_via_env(monkeypatch):

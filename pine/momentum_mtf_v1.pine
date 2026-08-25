@@ -1,0 +1,170 @@
+//@version=6
+// =============================================================================
+// Momentum MTF V1 — stratégie multi-timeframes du projet bot-td (Phase 25)
+// =============================================================================
+// CAHIER DES CHARGES (conforme au skill strategy-design)
+//
+//   Nom / version      : momentum_mtf_v1 (version 1, table strategies)
+//   Marché             : tout symbole de la liste blanche (BTCUSDT, ETHUSDT,
+//                        XAUUSD...) — aucun symbole codé en dur
+//   Timeframes         : graphique = timeframe d'ENTRÉE (15m recommandé)
+//                        4H = contexte / tendance   (configurable)
+//                        1H = confirmation momentum (configurable)
+//   Type               : tendance, avec confluence multi-timeframes
+//   Tendance (4H)      : EMA rapide > EMA lente (haussier) / < (baissier),
+//                        bougie 4H FERMÉE uniquement
+//   Confirmation (1H)  : RSI > 50 ET MACD ligne > signal (haussier),
+//                        inverse pour baissier, bougie 1H FERMÉE uniquement
+//   Entrée (graphique) : transition momentum locale (mêmes conditions que
+//                        momentum_v1) à la clôture de la bougie
+//   Sorties            : TP / SL en pourcentage, strategy.exit systématique
+//   Stop Loss          : entry * (1 - 1 %) BUY / (1 + 1 %) SELL (configurable)
+//   Take Profit        : entry * (1 + 2 %) BUY / (1 - 2 %) SELL (configurable)
+//   Risk/Reward        : 1:2 par défaut (conséquence de SL/TP configurables)
+//   Filtres            : aucun (volume peu fiable en crypto 24/7)
+//   Invalidation       : le SL est l'invalidation du scénario d'entrée
+//
+// RÈGLE PHASE 25 : le signal final (ordre simulé + alerte) n'est émis QUE si
+// TOUTES les conditions requises sont satisfaites SIMULTANÉMENT à la clôture :
+//   BUY  : tendance 4H haussière ET confirmation 1H haussière ET transition
+//          momentum locale haussière
+//   SELL : tendance 4H baissière ET confirmation 1H baissière ET transition
+//          momentum locale baissière
+// Jamais de signal contre le timeframe supérieur.
+//
+// ANTI-REPAINTING MTF (skill pine-script) :
+//  - les données 4H/1H viennent de request.security avec le combo sûr :
+//      expression décalée [1]  +  lookahead = barmerge.lookahead_on
+//    => seule la DERNIÈRE BOUGIE FERMÉE du timeframe supérieur est utilisée,
+//       jamais la bougie en cours (pas de future leak, pas de repainting :
+//       comportement identique en historique et en temps réel)
+//  - calc_on_every_tick = false, process_orders_on_close = true
+//  - conditions évaluées à la clôture ; alerte "Once Per Bar Close" (Ph. 16)
+//  - commission 0.1 % + slippage 2 ticks actifs dès le backtest
+//
+// Rappel projet : cette stratégie ne passe AUCUN ordre réel. Les strategy.*
+// sont des ordres SIMULÉS pour le backtest ; seul l'alert_message part vers
+// le webhook bot-td. La décision de trading reste humaine.
+// =============================================================================
+
+strategy("Momentum MTF V1", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
+     commission_type = strategy.commission.percent, commission_value = 0.1,
+     slippage = 2,
+     calc_on_every_tick = false,
+     process_orders_on_close = true)
+
+// --- Paramètres configurables ---
+// Timeframes supérieurs : le graphique reste sur le timeframe d'ENTRÉE
+// (15m recommandé) ; ces inputs définissent contexte et confirmation.
+tfTrend    = input.timeframe("240", "Timeframe TENDANCE (contexte)", tooltip = "Ex. 240 = 4H. Direction autorisée uniquement.")
+tfConfirm  = input.timeframe("60",  "Timeframe CONFIRMATION",        tooltip = "Ex. 60 = 1H. Momentum intermédiaire.")
+
+emaFastLen  = input.int(50,  "EMA rapide", minval = 1)
+emaSlowLen  = input.int(200, "EMA lente",  minval = 1)
+rsiLen      = input.int(14,  "RSI longueur", minval = 2)
+// Seuils RSI du timeframe d'ENTRÉE uniquement ; la confirmation 1H utilise
+// le seuil neutre 50 (côté du momentum, pas force du momentum).
+rsiLongTh   = input.float(55, "RSI seuil BUY",  minval = 50, maxval = 100)
+rsiShortTh  = input.float(45, "RSI seuil SELL", minval = 0, maxval = 50)
+macdFast    = input.int(12, "MACD rapide", minval = 1)
+macdSlow    = input.int(26, "MACD lent",   minval = 1)
+macdSignal  = input.int(9,  "MACD signal", minval = 1)
+slPct       = input.float(1.0, "Stop Loss (%)",   minval = 0.1, step = 0.1) / 100
+tpPct       = input.float(2.0, "Take Profit (%)", minval = 0.1, step = 0.1) / 100
+
+// Secret du webhook : renseigné dans les paramètres de la stratégie dans
+// TradingView (jamais commité dans ce dépôt, jamais visible dans le code).
+webhookSecret = input.string("", "Secret webhook bot-td",
+     tooltip = "Copier la valeur TRADINGVIEW_WEBHOOK_SECRET du fichier .env du serveur bot-td.")
+
+// =============================================================================
+// NIVEAU 1 — TENDANCE sur le timeframe élevé (ex. 4H), bougie FERMÉE
+// Combo anti-repainting : src[1] dans l'expression + lookahead_on
+// => dernière bougie 4H terminée, identique en historique et en temps réel.
+// =============================================================================
+f_htf_trend() =>
+    [ta.ema(close, emaFastLen)[1], ta.ema(close, emaSlowLen)[1]]
+
+[emaFastTrendTf, emaSlowTrendTf] = request.security(syminfo.tickerid, tfTrend,
+     f_htf_trend(), lookahead = barmerge.lookahead_on)
+
+trendUpTf   = emaFastTrendTf > emaSlowTrendTf
+trendDownTf = emaFastTrendTf < emaSlowTrendTf
+
+// =============================================================================
+// NIVEAU 2 — CONFIRMATION sur le timeframe intermédiaire (ex. 1H), bougie FERMÉE
+// Même combo anti-repainting. Momentum : RSI + MACD, tous deux confirmés.
+// =============================================================================
+f_itf_momentum() =>
+    r = ta.rsi(close, rsiLen)[1]
+    [m, s, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+    [r > 50 and m[1] > s[1], r < 50 and m[1] < s[1]]
+
+[confirmUpTf, confirmDownTf] = request.security(syminfo.tickerid, tfConfirm,
+     f_itf_momentum(), lookahead = barmerge.lookahead_on)
+
+// =============================================================================
+// NIVEAU 3 — ENTRÉE sur le timeframe du graphique (ex. 15m), à la clôture
+// Transition momentum locale (mêmes conditions que momentum_v1) : le signal
+// n'est émis qu'au changement d'état, pas à chaque bougie.
+// =============================================================================
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+[macdLine, macdSignalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+trendUp     = emaFast > emaSlow
+trendDown   = emaFast < emaSlow
+macdBullish = macdLine > macdSignalLine
+macdBearish = macdLine < macdSignalLine
+
+allBullish = trendUp and rsiVal > rsiLongTh and macdBullish
+allBearish = trendDown and rsiVal < rsiShortTh and macdBearish
+
+// --- CONFLUENCE FINALE (Phase 25) : les TROIS niveaux doivent être alignés ---
+longCondition  = allBullish and not allBullish[1] and trendUpTf   and confirmUpTf
+shortCondition = allBearish and not allBearish[1] and trendDownTf and confirmDownTf
+
+// --- Construction du JSON pour le webhook (schéma exact du backend) ---
+// Nombres toujours via str.tostring ; timestamp UTC ISO 8601.
+// timeframe = timeframe.period => le TF D'ENTRÉE du graphique (ex. "15").
+buildAlertJson(action, entry, sl, tp) =>
+    '{"secret":"' + webhookSecret + '"' +
+     ',"strategy":"momentum_mtf_v1"' +
+     ',"symbol":"' + syminfo.ticker + '"' +
+     ',"exchange":"' + syminfo.prefix + '"' +
+     ',"timeframe":"' + timeframe.period + '"' +
+     ',"action":"' + action + '"' +
+     ',"price":"' + str.tostring(entry) + '"' +
+     ',"stop_loss":"' + str.tostring(sl) + '"' +
+     ',"take_profit":"' + str.tostring(tp) + '"' +
+     ',"timestamp":"' + str.format_time(timenow, "yyyy-MM-dd'T'HH:mm:ss'Z'", "UTC") + '"}'
+
+// --- Ordres simulés : chaque entrée a TOUJOURS sa sortie (SL/TP) ---
+if longCondition
+    entryPrice = close
+    slPrice = entryPrice * (1 - slPct)
+    tpPrice = entryPrice * (1 + tpPct)
+    strategy.entry("Long", strategy.long,
+        alert_message = buildAlertJson("BUY", entryPrice, slPrice, tpPrice))
+    strategy.exit("Long TP/SL", from_entry = "Long", stop = slPrice, limit = tpPrice)
+
+if shortCondition
+    entryPrice = close
+    slPrice = entryPrice * (1 + slPct)
+    tpPrice = entryPrice * (1 - tpPct)
+    strategy.entry("Short", strategy.short,
+        alert_message = buildAlertJson("SELL", entryPrice, slPrice, tpPrice))
+    strategy.exit("Short TP/SL", from_entry = "Short", stop = slPrice, limit = tpPrice)
+
+// --- Affichage (lecture du graphique) ---
+// Fond légèrement coloré selon la tendance du timeframe élevé : un signal ne
+// doit JAMAIS aller contre ce fond (vérification visuelle de la confluence).
+plot(emaFast, "EMA rapide", color = color.teal)
+plot(emaSlow, "EMA lente",  color = color.orange)
+bgcolor(trendUpTf ? color.new(color.green, 95) : trendDownTf ? color.new(color.red, 95) : na,
+     title = "Tendance timeframe élevé")
+plotshape(longCondition,  "Signal BUY",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size = size.small)
+plotshape(shortCondition, "Signal SELL", shape.triangledown, location.abovebar, color.new(color.red, 0), size = size.small)

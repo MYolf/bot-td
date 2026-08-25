@@ -131,6 +131,62 @@ class TestMultiStrategies:
         assert response.json()["reason"] == "invalid_strategy"
 
 
+# --- Phase 25 : analyse multi-timeframe (stratégie momentum_mtf_v1) ---
+
+class TestAnalyseMultiTimeframe:
+    def test_signal_mtf_pipeline_complet(self, client):
+        """Le JSON exact produit par pine/momentum_mtf_v1.pine traverse tout
+        le pipeline : accepté, stocké, notifié, position paper ouverte.
+
+        Le timeframe envoyé par la stratégie est celui du graphique (entrée,
+        ex. 15m) : les timeframes supérieurs sont évalués dans le Pine.
+        """
+        from app.database.models import PaperPosition
+
+        response = client.post(
+            "/webhook/tradingview",
+            json=_payload(
+                strategy="momentum_mtf_v1",
+                timeframe="15",
+                action="SELL",
+                price="104100.50",
+                stop_loss="104800.00",
+                take_profit="103500.00",
+            ),
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "sent"
+
+        (signal,) = _signals_en_base(client)
+        assert signal.timeframe == "15"
+        assert signal.action == "SELL"
+        assert signal.status == "SENT"
+
+        async def positions():
+            async with client.db_factory() as session:
+                return list(
+                    (await session.execute(select(PaperPosition))).scalars().all()
+                )
+
+        assert len(asyncio.run(positions())) == 1
+
+    def test_trois_niveaux_coexistent_sans_collision(self, client):
+        """Tendance (240), confirmation (60) et entrée (15) d'un même
+        symbole coexistent en base : le signal_uid inclut le timeframe, donc
+        jamais de collision de déduplication entre les niveaux.
+        """
+        for timeframe in ("240", "60", "15"):
+            response = client.post(
+                "/webhook/tradingview",
+                json=_payload(strategy="momentum_mtf_v1", timeframe=timeframe),
+            )
+            assert response.json()["status"] == "sent"
+
+        signaux = _signals_en_base(client)
+        assert {s.timeframe for s in signaux} == {"240", "60", "15"}
+        assert len({s.signal_uid for s in signaux}) == 3
+
+
 # --- Phases 23-24 : statistiques filtrables ---
 
 def _seed_signal(

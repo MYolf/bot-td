@@ -79,12 +79,18 @@
 - **Phase 22 — Multi-actifs** : déjà couvert par `ALLOWED_SYMBOLS` (ajout d'un actif = une ligne de `.env`, zéro code) ; prouvé par tests (BTCUSDT/ETHUSDT/XAUUSD dans tout le pipeline, actif non configuré rejeté, positions paper par actif)
 - **Phase 23 — Multi-timeframes** : timeframe stocké avec chaque signal (depuis la Phase 11) ; **statistiques filtrables par timeframe** (`/stats timeframe:15`) — repository filtrable (`count_*`, `closed_results`), filtre invalide refusé avec la liste des valeurs autorisées
 - **Phase 24 — Multi-stratégies** : couvert par `ALLOWED_STRATEGIES` + table `strategies` + affichage lisible ("Momentum V1") ; **`/stats strategie:...`** filtre aussi par stratégie (filtres combinables, critères affichés dans l'embed)
-- **Tests : 102/102 passent** (`pytest`, `tests/test_multi.py`)
+- **Phase 25 — Analyse multi-timeframe** (`momentum_mtf_v1`)
+  - `pine/momentum_mtf_v1.pine` (Pine v6) : 4H = tendance (EMA 50/200), 1H = confirmation (RSI + MACD), TF du graphique (15m) = entrée — **le signal final n'est émis que si les TROIS niveaux sont alignés simultanément à la clôture** (jamais contre le timeframe supérieur)
+  - MTF anti-repainting : `request.security` avec le combo sûr `expression[1]` + `lookahead_on` → uniquement des bougies supérieures FERMÉES (pas de future leak, historique == temps réel) ; `calc_on_every_tick=false`, `process_orders_on_close=true`, frais 0,1 % + slippage dès le backtest
+  - Timeframes 4H/1H configurables en inputs (graphique sur le TF d'entrée) ; `alert_message` = JSON conforme au schéma du webhook (`strategy=momentum_mtf_v1`, `timeframe=TF du graphique`)
+  - Backend inchangé (Phases 22-24 : multi-TF/stratégies par configuration) ; `momentum_mtf_v1` ajoutée à la liste blanche par défaut (`settings.py`, `.env.example`)
+  - Cahier des charges complet documenté en tête du fichier Pine (conforme au skill strategy-design)
+  - Tests : JSON exact de la stratégie accepté sur tout le pipeline (stocké + notifié + position paper) ; les 3 niveaux (240/60/15) coexistent sans collision de déduplication — **104/104 passent**
 
 ## 🔧 En cours / à venir (par Claude)
 
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 25+** — Analyse multi-timeframe, scoring, tests complets, Docker, production
+- **Phase 26+** — Scoring, tests complets, Docker, migrations, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
@@ -98,6 +104,15 @@ Rien de bloquant pour les phases 14-15 ✅ (app Discord créée, bot invité, Do
 5. URL du webhook : `https://TON_DOMAINE/webhook/tradingview` (⚠️ nécessite un serveur accessible en HTTPS — voir Phase 17)
 
 *(Instructions détaillées pas à pas le moment venu)*
+
+### ⏳ À venir (vérification Phase 25) — tester momentum_mtf_v1 dans TradingView
+1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_mtf_v1.pine` → **Add to chart**
+2. Symbole BTCUSDT (BINANCE), **timeframe du graphique : 15m** (le TF d'entrée ; 4H et 1H se règlent dans les paramètres de la stratégie)
+3. Vérifier que le script compile sans erreur et s'affiche (fond vert/rouge = tendance 4H, triangles = signaux)
+4. Vérifier visuellement : **aucun triangle ne va contre le fond** (règle de confluence de la Phase 25)
+5. Ouvrir le Strategy Tester : backtest avec frais, comparer avec/sans Bar Magnifier
+6. Tester en Replay : les signaux historiques ne doivent pas disparaître ni se déplacer (anti-repainting)
+7. Si tu veux la brancher en alerte réelle : ajouter `"momentum_mtf_v1"` dans `ALLOWED_STRATEGIES` du `.env` (nécessaire seulement si tu as surchargé la variable ; le défaut l'inclut déjà)
 
 ## 📌 Rappels importants
 
