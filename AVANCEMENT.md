@@ -2,6 +2,14 @@
 
 > Fichier mis à jour au fil des phases. ✅ = fait, 🔧 = en cours, ⏳ = à faire, 👤 = à faire de TON côté.
 
+## 📍 Point d'avancement (2026-08-25)
+
+- **Phases terminées** : 0-15, 18-27 (28 phases sur 30)
+- **Tests** : **125/125 passent** (`pytest`)
+- **Reste à faire (Claude)** : Phase 28 (Docker), Phase 29 (migrations), Phase 30 (production)
+- **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) et vérifications manuelles dans TradingView — voir la section 👤 ci-dessous
+- Pipeline opérationnel en local : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
+
 ## ✅ Terminé (par Claude)
 
 - **Phase 0 — Préparation**
@@ -108,30 +116,39 @@
 
 ## 🔧 En cours / à venir (par Claude)
 
+- **Phase 28 — Docker** : Dockerfile de l'application + docker-compose complet (app + PostgreSQL)
+- **Phase 29 — Migrations** : procédure de migration de base (backup, upgrade, rollback)
+- **Phase 30 — Production** : durcissement final, déploiement, supervision
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
-- **Phase 28+** — Docker, migrations, production
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
-Rien de bloquant pour les phases 14-15 ✅ (app Discord créée, bot invité, Docker installé, `.env` rempli).
+Rien de bloquant pour les phases 28-30 ✅ (app Discord créée, bot invité, Docker installé et fonctionnel, `.env` rempli). Les actions ci-dessous ne bloquent pas non plus la suite : elles concernent les **alertes réelles** et la **vérification manuelle des stratégies**.
 
-### ⏳ À venir (Phase 16) — créer l'alerte TradingView
-1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_v1.pine` → **Add to chart**
+### ⏳ 1. Vérifier les stratégies dans TradingView (Phases 14-15, 25, 26)
+
+**momentum_v1** (simple, TF unique) :
+1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_v1.pine` (version à jour : alert_message inclut le score) → **Add to chart**
 2. Symbole : BTCUSDT (BINANCE), timeframe 15m ou 60m
-3. Renseigner le **Secret webhook** dans les paramètres de la stratégie (valeur `TRADINGVIEW_WEBHOOK_SECRET` du `.env`)
-4. Créer l'alerte : condition **Momentum V1**, type **Order fills** (ou alert() selon config), message `{{strategy.order.alert_message}}`, **Once Per Bar Close**
-5. URL du webhook : `https://TON_DOMAINE/webhook/tradingview` (⚠️ nécessite un serveur accessible en HTTPS — voir Phase 17)
+3. Strategy Tester : backtest avec frais (déjà actifs), vérifier que chaque entrée a sa sortie (SL/TP)
 
-*(Instructions détaillées pas à pas le moment venu)*
-
-### ⏳ À venir (vérification Phase 25) — tester momentum_mtf_v1 dans TradingView
-1. Ouvrir TradingView → Pine Editor → coller le contenu de `pine/momentum_mtf_v1.pine` → **Add to chart**
+**momentum_mtf_v1** (multi-timeframes) :
+1. Coller `pine/momentum_mtf_v1.pine` → **Add to chart**
 2. Symbole BTCUSDT (BINANCE), **timeframe du graphique : 15m** (le TF d'entrée ; 4H et 1H se règlent dans les paramètres de la stratégie)
 3. Vérifier que le script compile sans erreur et s'affiche (fond vert/rouge = tendance 4H, triangles = signaux)
 4. Vérifier visuellement : **aucun triangle ne va contre le fond** (règle de confluence de la Phase 25)
-5. Ouvrir le Strategy Tester : backtest avec frais, comparer avec/sans Bar Magnifier
-6. Tester en Replay : les signaux historiques ne doivent pas disparaître ni se déplacer (anti-repainting)
-7. Si tu veux la brancher en alerte réelle : ajouter `"momentum_mtf_v1"` dans `ALLOWED_STRATEGIES` du `.env` (nécessaire seulement si tu as surchargé la variable ; le défaut l'inclut déjà)
+5. Strategy Tester : backtest avec frais ; tester en Replay : les signaux historiques ne doivent **ni disparaître ni se déplacer** (anti-repainting)
+6. Si alerte réelle souhaitée : `"momentum_mtf_v1"` est déjà dans la liste blanche par défaut (rien à faire sauf si tu as surchargé `ALLOWED_STRATEGIES`)
+
+**Score (Phase 26)** : dans les deux Strategy Testers, le JSON d'alerte contient désormais `"score_trend"`, `"score_momentum"`, `"score_macd"` (+ `"score_htf"` pour MTF) — vérifiable via une alerte de test.
+
+### ⏳ 2. Phase 16 — créer l'alerte TradingView réelle
+1. Suivant la vérification ci-dessus : stratégie **Momentum V1** ou **Momentum MTF V1** sur le graphique
+2. Renseigner le **Secret webhook** dans les paramètres de la stratégie (valeur `TRADINGVIEW_WEBHOOK_SECRET` du `.env`)
+3. Créer l'alerte : condition **la stratégie**, type **Order fills**, message `{{strategy.order.alert_message}}`, **Once Per Bar Close**
+4. URL du webhook : `https://TON_DOMAINE/webhook/tradingview` (⚠️ nécessite un serveur accessible en HTTPS — voir Phase 17)
+
+*(Instructions détaillées pas à pas le moment venu)*
 
 ## 📌 Rappels importants
 
