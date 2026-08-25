@@ -4,9 +4,9 @@
 
 ## 📍 Point d'avancement (2026-08-25)
 
-- **Phases terminées** : 0-15, 18-28 (29 phases sur 30)
+- **Phases terminées** : 0-15, 18-29 (reste : Phase 16-17 côté utilisateur, Phase 30 mise en production)
 - **Tests** : **125/125 passent** (`pytest`)
-- **Reste à faire (Claude)** : Phase 29 (migrations), Phase 30 (production)
+- **Reste à faire (Claude)** : Phase 30 (production, avec toi)
 - **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) — les stratégies sont vérifiées manuellement ✅ (voir la section 👤 ci-dessous)
 - Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
 - Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
@@ -121,10 +121,14 @@
   - Service `db` renommé `postgres` (ancien conteneur recréé via `--remove-orphans`, **données conservées** dans le volume `postgres_data`)
   - Vérifié manuellement : `docker compose up -d --build` → 2 conteneurs healthy, migrations appliquées au démarrage, bot Discord connecté depuis le conteneur, `GET /health` → 200, webhook avec mauvais secret → 401
   - Tests : **125/125 passent** (inchangés — l'infrastructure ne touche pas au code)
+- **Phase 29 — Migration database** (Projet.md §43)
+  - Alembic déjà en place et systématique depuis la Phase 11 (2 migrations, jamais de modification directe des tables) ; le conteneur `app` applique `alembic upgrade head` à chaque démarrage
+  - `MIGRATIONS.md` : procédure formalisée — règles (app arrêtée, backup obligatoire, rollback = perte possible des colonnes supprimées), déploiement pas à pas (backup `pg_dump` → `alembic upgrade head` → vérifications → redémarrage), création de migration, rollback, restauration de backup
+  - `backups/` ajouté au `.gitignore` (les dumps ne sont jamais commités)
+  - **Validé en conditions réelles sur la base dev** : backup → `downgrade -1` (colonne `signals.score` supprimée proprement) → `upgrade head` (recréée) → données intactes, app redémarrée saine, `/health` OK ; constat documenté : les valeurs des colonnes supprimées sont perdues au downgrade (NULL) — d'où le backup obligatoire
 
 ## 🔧 En cours / à venir (par Claude)
 
-- **Phase 29 — Migrations** : procédure de migration de base (backup, upgrade, rollback)
 - **Phase 30 — Production** : durcissement final, déploiement, supervision
 - **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
 

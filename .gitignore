@@ -15,6 +15,9 @@ venv/
 *.sqlite3
 *.db
 
+# Sauvegardes pg_dump (procédure MIGRATIONS.md)
+backups/
+
 # Logs
 *.log
 
