@@ -1,0 +1,12 @@
+# Image Caddy avec le plugin DuckDNS (Phase 17).
+# Nécessaire pour obtenir le certificat Let's Encrypt par DNS challenge
+# (aucun port 80 ouvert, aucune action manuelle de renouvellement).
+#
+# Le build est indépendant de l'application : seules les images officielles
+# Caddy sont utilisées, aucun code ni secret du dépôt n'entre dans l'image.
+
+FROM caddy:2-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/duckdns
+
+FROM caddy:2
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

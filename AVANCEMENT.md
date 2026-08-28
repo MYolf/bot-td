@@ -4,10 +4,10 @@
 
 ## 📍 Point d'avancement (2026-08-25)
 
-- **Phases terminées** : 0-15, 18-29 (reste : Phase 16-17 côté utilisateur, Phase 30 mise en production)
+- **Phases terminées** : 0-15, 18-29 (Phase 17 en cours : fichiers prod prêts ✅, VPS OVH commandé, runbook détaillé en section 👤 ci-dessous)
 - **Tests** : **125/125 passent** (`pytest`)
-- **Reste à faire (Claude)** : Phase 30 (production, avec toi)
-- **Reste à faire (toi)** : Phase 16-17 (alertes TradingView réelles + serveur HTTPS public) — les stratégies sont vérifiées manuellement ✅ (voir la section 👤 ci-dessous)
+- **Reste à faire (Claude)** : Phase 30 (production, avec toi) ; installation serveur guidée de la Phase 17
+- **Reste à faire (toi)** : Phase 17 étapes A et C (runbook ci-dessous), puis Phase 16 (alerte TradingView réelle) — les stratégies sont vérifiées manuellement ✅
 - Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
 - Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
 
@@ -158,11 +158,64 @@ dernière bougie fermée uniquement), `calc_on_every_tick=false`,
 **Score (Phase 26)** : à vérifier via l'alerte de test en Phase 16 (champs `score_*`
 dans le JSON `{{strategy.order.alert_message}}`).
 
-### ⏳ 2. Phase 16 — créer l'alerte TradingView réelle
+### 🔧 2. Phase 17 — Mettre le serveur en ligne (VPS OVH commandé le 2026-08-28)
+
+**Commandé** : OVH **VPS-1 2027** (2 vCore / 4 GB RAM / 40 GB NVMe, Gravelines France,
+**Ubuntu 26.04 LTS**, 4,49 €HT/mois, backup automatisé offert — complète la procédure
+`pg_dump` de la Phase 29). **Domaine réservé** : `bot-td.duckdns.org` (DuckDNS gratuit,
+token enregistré dans le `.env` **local** — jamais dans ce fichier ni dans Git).
+
+**Déjà prêt côté dépôt** (commit Phase 17) : `Dockerfile.caddy` (Caddy + plugin DuckDNS,
+build vérifié), `Caddyfile` (HTTPS Let's Encrypt automatique par DNS challenge — port 80
+inutile), `docker-compose.prod.yml` (**seul le port 443 exposé sur Internet** ; l'API
+reste interne au réseau Docker et PostgreSQL n'est plus publié ; mot de passe DB lu
+dans `.env` via `POSTGRES_PASSWORD`), `.env.example` enrichi (`DOMAIN`, `DUCKDNS_TOKEN`,
+`POSTGRES_PASSWORD`). Tests 125/125 inchangés.
+
+#### Étape A — Réception du VPS (👤 toi, dès livraison)
+
+1. **Récupérer l'IPv4 publique** : e-mail de livraison OVH, ou espace client
+   *Bare Metal Cloud → VPS → ton serveur*. La noter.
+2. **Tester la connexion SSH** depuis Git Bash (répondre `yes` à la question de
+   fingerprint au premier accès) :
+   ```bash
+   ssh ubuntu@IP_DU_VPS        # utilisateur standard des images Ubuntu OVH
+   # si refus :
+   ssh root@IP_DU_VPS          # avec le mot de passe reçu par e-mail
+   ```
+   Noter **le login qui fonctionne** (`ubuntu` ou `root`, clé SSH ou mot de passe).
+3. **Pointer le domaine sur le VPS** (remplace l'IP de ta box actuelle) :
+   ```bash
+   curl "https://www.duckdns.org/update?domains=bot-td&token=LE_TOKEN_DU_ENV_LOCAL&ip=IP_DU_VPS"
+   ```
+   Doit répondre `OK` (alternative : coller l'IP à la main sur duckdns.org).
+
+#### Étape B — Installation serveur (🔧 avec Claude, session guidée)
+
+Dans l'ordre, Claude guide chaque commande :
+1. Mises à jour : `apt update && apt upgrade`
+2. Durcissement SSH : connexion par clé uniquement, mot de passe désactivé
+3. Pare-feu UFW : uniquement SSH (22) et HTTPS (443)
+4. Installation Docker + plugin compose
+5. Récupération du dépôt (clone Git) sur le serveur
+6. Création du `.env` **de production** sur le VPS : tous les secrets habituels
+   (Discord, `TRADINGVIEW_WEBHOOK_SECRET`...) + `DOMAIN=bot-td.duckdns.org`,
+   `DUCKDNS_TOKEN=...`, `POSTGRES_PASSWORD=<mot de passe fort>`
+7. Démarrage : `docker compose -f docker-compose.prod.yml up -d --build`
+8. Vérifications : `https://bot-td.duckdns.org/health` → 200 ; webhook sans secret → 401 ;
+   bot Discord connecté (`/status` dans Discord)
+
+#### Étape C — Créer l'alerte TradingView réelle (👤 toi, Phase 16, ~15 min)
+
+URL du webhook à renseigner dans TradingView :
+`https://bot-td.duckdns.org/webhook/tradingview`
+(Instructions pas à pas détaillées fournies quand le serveur sera en ligne.)
+
+### ⏳ 3. Phase 16 — créer l'alerte TradingView réelle
 1. Suivant la vérification ci-dessus : stratégie **Momentum V1** ou **Momentum MTF V1** sur le graphique
 2. Renseigner le **Secret webhook** dans les paramètres de la stratégie (valeur `TRADINGVIEW_WEBHOOK_SECRET` du `.env`)
 3. Créer l'alerte : condition **la stratégie**, type **Order fills**, message `{{strategy.order.alert_message}}`, **Once Per Bar Close**
-4. URL du webhook : `https://TON_DOMAINE/webhook/tradingview` (⚠️ nécessite un serveur accessible en HTTPS — voir Phase 17)
+4. URL du webhook : `https://bot-td.duckdns.org/webhook/tradingview` (nécessite la Phase 17 étapes A+B ci-dessus)
 
 *(Instructions détaillées pas à pas le moment venu)*
 

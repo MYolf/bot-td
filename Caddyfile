@@ -1,0 +1,16 @@
+# Reverse proxy HTTPS (Phase 17).
+#
+# {$DOMAIN} et {$DUCKDNS_TOKEN} sont fournis par docker-compose.prod.yml
+# (variables d'environnement issues du .env, jamais dans ce fichier).
+#
+# Le certificat Let's Encrypt est obtenu et renouvelé automatiquement par
+# DNS challenge DuckDNS : le port 80 n'a pas besoin d'être ouvert.
+
+{$DOMAIN} {
+	tls {
+		dns duckdns {$DUCKDNS_TOKEN}
+	}
+
+	# L'API n'est exposée qu'en interne ; Caddy est le seul point d'entrée.
+	reverse_proxy app:8000
+}

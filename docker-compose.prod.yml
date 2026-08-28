@@ -1,0 +1,74 @@
+# Déploiement PRODUCTION (Phase 17) — à utiliser à la place du compose de dev.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Différences avec docker-compose.yml (dev) :
+# - Caddy reverse proxy HTTPS (certificat Let's Encrypt via DNS challenge DuckDNS)
+# - Le port 8000 de l'API et le port 5432 de PostgreSQL ne sont PAS exposés
+#   sur Internet : seul Caddy écoute (443), l'API reste interne au réseau Docker
+# - Identifiants PostgreSQL issus du .env (jamais d'identifiants de dev en prod)
+#
+# Prérequis dans .env : DOMAIN (ex: bot-td.duckdns.org), DUCKDNS_TOKEN,
+# POSTGRES_PASSWORD (fort), plus les secrets habituels (Discord, webhook).
+
+services:
+  app:
+    build: .
+    container_name: bot-td-app
+    env_file: .env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot_td}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bot_td}
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: postgres:16
+    container_name: bot-td-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bot_td}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-bot_td}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot_td -d bot_td"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: bot-td-caddy
+    env_file: .env
+    environment:
+      DOMAIN: ${DOMAIN}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN}
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
