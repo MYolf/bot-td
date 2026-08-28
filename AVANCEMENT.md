@@ -2,12 +2,12 @@
 
 > Fichier mis à jour au fil des phases. ✅ = fait, 🔧 = en cours, ⏳ = à faire, 👤 = à faire de TON côté.
 
-## 📍 Point d'avancement (2026-08-25)
+## 📍 Point d'avancement (2026-08-29)
 
-- **Phases terminées** : 0-15, 18-29 (Phase 17 en cours : fichiers prod prêts ✅, VPS OVH commandé, runbook détaillé en section 👤 ci-dessous)
+- **Phases terminées** : 0-15, 17, 18-29 (serveur de production EN LIGNE, voir § Phase 17 ci-dessous)
 - **Tests** : **125/125 passent** (`pytest`)
-- **Reste à faire (Claude)** : Phase 30 (production, avec toi) ; installation serveur guidée de la Phase 17
-- **Reste à faire (toi)** : Phase 17 étapes A et C (runbook ci-dessous), puis Phase 16 (alerte TradingView réelle) — les stratégies sont vérifiées manuellement ✅
+- **Reste à faire (toi)** : Phase 16 (alerte TradingView réelle, étape C du runbook) — les stratégies sont vérifiées manuellement ✅
+- **Reste à faire (Claude)** : Phase 30 (clôture, avec toi)
 - Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
 - Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
 
@@ -158,12 +158,24 @@ dernière bougie fermée uniquement), `calc_on_every_tick=false`,
 **Score (Phase 26)** : à vérifier via l'alerte de test en Phase 16 (champs `score_*`
 dans le JSON `{{strategy.order.alert_message}}`).
 
-### 🔧 2. Phase 17 — Mettre le serveur en ligne (VPS OVH commandé le 2026-08-28)
+### ✅ 2. Phase 17 — Serveur EN LIGNE depuis le 2026-08-29
 
-**Commandé** : OVH **VPS-1 2027** (2 vCore / 4 GB RAM / 40 GB NVMe, Gravelines France,
+**VPS OVH VPS-1 2027** (2 vCore / 4 GB RAM / 40 GB NVMe, Gravelines France,
 **Ubuntu 26.04 LTS**, 4,49 €HT/mois, backup automatisé offert — complète la procédure
-`pg_dump` de la Phase 29). **Domaine réservé** : `bot-td.duckdns.org` (DuckDNS gratuit,
-token enregistré dans le `.env` **local** — jamais dans ce fichier ni dans Git).
+`pg_dump` de la Phase 29). **Domaine** : `bot-td.duckdns.org` → IP du VPS.
+
+**Installation réalisée (2026-08-29)** :
+- Étape A ✅ : IP VPS récupérée, SSH `ubuntu` testé, DuckDNS pointé sur le VPS, clé SSH ed25519 installée (`ssh-copy-id`)
+- Étape B ✅ : `apt upgrade`, SSH durci (clé uniquement, `PasswordAuthentication no`, `PermitRootLogin no` — fichier `50-cloud-init.conf` neutralisé), UFW (22 + 443 seulement), Docker 29.1.3 + compose 2.40.3 (paquets Ubuntu), dépôt cloné via **deploy key GitHub en lecture seule** (`vps-bot-td`), `.env` production (POSTGRES_PASSWORD généré sur le VPS), pile démarrée
+- Vérifications e2e ✅ : `/health` → 200 ; mauvais secret → 401 ; signal complet → `sent` + embed Discord ; doublon → `duplicate` (non re-stocké) ; `/status` OK ; certificat Let's Encrypt obtenu (renouvellement auto) ; signal de test supprimé de la base
+- Déploiement GitHub à jour : `origin/main` poussé (5a787f4 → 0afa0d6)
+
+**Commandes serveur utiles** (depuis le PC, `ssh ubuntu@IP`) :
+```bash
+cd ~/bot-td && docker compose -f docker-compose.prod.yml ps      # état des conteneurs
+docker compose -f docker-compose.prod.yml logs -f app            # logs de l'app
+git pull && docker compose -f docker-compose.prod.yml up -d --build   # mise à jour
+```
 
 **Déjà prêt côté dépôt** (commit Phase 17) : `Dockerfile.caddy` (Caddy + plugin DuckDNS,
 build vérifié), `Caddyfile` (HTTPS Let's Encrypt automatique par DNS challenge — port 80
@@ -172,7 +184,7 @@ reste interne au réseau Docker et PostgreSQL n'est plus publié ; mot de passe 
 dans `.env` via `POSTGRES_PASSWORD`), `.env.example` enrichi (`DOMAIN`, `DUCKDNS_TOKEN`,
 `POSTGRES_PASSWORD`). Tests 125/125 inchangés.
 
-#### Étape A — Réception du VPS (👤 toi, dès livraison)
+#### Étape A — Réception du VPS (👤 FAIT le 2026-08-29)
 
 1. **Récupérer l'IPv4 publique** : e-mail de livraison OVH, ou espace client
    *Bare Metal Cloud → VPS → ton serveur*. La noter.
@@ -190,7 +202,7 @@ dans `.env` via `POSTGRES_PASSWORD`), `.env.example` enrichi (`DOMAIN`, `DUCKDNS
    ```
    Doit répondre `OK` (alternative : coller l'IP à la main sur duckdns.org).
 
-#### Étape B — Installation serveur (🔧 avec Claude, session guidée)
+#### Étape B — Installation serveur (🔧 FAIT le 2026-08-29 avec Claude)
 
 Dans l'ordre, Claude guide chaque commande :
 1. Mises à jour : `apt update && apt upgrade`
@@ -205,7 +217,7 @@ Dans l'ordre, Claude guide chaque commande :
 8. Vérifications : `https://bot-td.duckdns.org/health` → 200 ; webhook sans secret → 401 ;
    bot Discord connecté (`/status` dans Discord)
 
-#### Étape C — Créer l'alerte TradingView réelle (👤 toi, Phase 16, ~15 min)
+#### Étape C — Créer l'alerte TradingView réelle (👤 toi, Phase 16, ~15 min) — DERNIÈRE ÉTAPE RESTANTE
 
 URL du webhook à renseigner dans TradingView :
 `https://bot-td.duckdns.org/webhook/tradingview`
