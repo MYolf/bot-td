@@ -1,0 +1,42 @@
+"""Configuration du moteur de signaux (variables d'environnement uniquement).
+
+Volontairement indépendant de app.config.settings : le moteur n'a besoin ni
+de Discord ni de la base de données, et doit pouvoir tourner seul.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class EngineSettings(BaseSettings):
+    """Paramètres du moteur, chargés depuis l'environnement (.env)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
+
+    engine_enabled: bool = Field(default=True, alias="ENGINE_ENABLED")
+    engine_symbols: list[str] = Field(
+        default=["BTCUSDT", "ETHUSDT"], alias="ENGINE_SYMBOLS"
+    )
+    engine_timeframe: str = Field(default="15", alias="ENGINE_TIMEFRAME")
+    # Cadence de sondage : 45 s = détection d'une clôture 15m en < 1 minute,
+    # très en deçà de SIGNAL_MAX_AGE_SECONDS (300) côté backend.
+    engine_poll_seconds: int = Field(default=45, alias="ENGINE_POLL_SECONDS")
+    engine_webhook_url: str = Field(
+        default="http://localhost:8000/webhook/tradingview", alias="ENGINE_WEBHOOK_URL"
+    )
+    # Historique récupéré à chaque sondage : 500 >> EMA200 + amorce MACD.
+    engine_candle_limit: int = Field(default=500, alias="ENGINE_CANDLE_LIMIT")
+
+    # Secret partagé avec le backend (jamais loggé, jamais commité).
+    tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")
+
+
+def get_engine_settings() -> EngineSettings:
+    return EngineSettings()

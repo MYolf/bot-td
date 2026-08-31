@@ -2,14 +2,15 @@
 
 > Fichier mis à jour au fil des phases. ✅ = fait, 🔧 = en cours, ⏳ = à faire, 👤 = à faire de TON côté.
 
-## 📍 Point d'avancement (2026-08-29)
+## 📍 Point d'avancement (2026-08-31)
 
 - **Phases terminées** : 0-15, 17, 18-29 (serveur de production EN LIGNE, voir § Phase 17 ci-dessous)
-- **Tests** : **125/125 passent** (`pytest`)
-- **Reste à faire (toi)** : Phase 16 (alerte TradingView réelle, étape C du runbook) — les stratégies sont vérifiées manuellement ✅
+- **Moteur de signaux local** (`engine/`) : alternative **gratuite** à TradingView (plan gratuit = pas d'alertes de stratégie/webhooks) — bougies Binance publiques → Momentum V1 à la clôture → même JSON vers le webhook. Voir § Moteur ci-dessous. **Déploiement VPS à faire** 👤
+- **Tests** : **157/157 passent** (`pytest`)
+- **Reste à faire (toi)** : déployer le conteneur `engine` sur le VPS (mise à jour standard `git pull` + `up -d --build`) ; Phase 16 (alerte TradingView réelle) devient **optionnelle** — le moteur la remplace tant qu'il n'y a pas d'abonnement TradingView
 - **Reste à faire (Claude)** : Phase 30 (clôture, avec toi)
 - Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
-- Pipeline opérationnel : TradingView (JSON) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
+- Pipeline opérationnel : TradingView **ou moteur local** (JSON identique) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
 
 ## ✅ Terminé (par Claude)
 
@@ -126,6 +127,15 @@
   - `MIGRATIONS.md` : procédure formalisée — règles (app arrêtée, backup obligatoire, rollback = perte possible des colonnes supprimées), déploiement pas à pas (backup `pg_dump` → `alembic upgrade head` → vérifications → redémarrage), création de migration, rollback, restauration de backup
   - `backups/` ajouté au `.gitignore` (les dumps ne sont jamais commités)
   - **Validé en conditions réelles sur la base dev** : backup → `downgrade -1` (colonne `signals.score` supprimée proprement) → `upgrade head` (recréée) → données intactes, app redémarrée saine, `/health` OK ; constat documenté : les valeurs des colonnes supprimées sont perdues au downgrade (NULL) — d'où le backup obligatoire
+
+- **Moteur de signaux local — Option A « sans TradingView »** (2026-08-31)
+  - Contexte : le plan gratuit TradingView n'autorise ni alertes de stratégie ni webhooks → source de signaux portée en Python, sur le VPS déjà payé
+  - `engine/` : `indicators.py` (EMA/RSI Wilder/MACD fidèles aux `ta.*`, amorce SMA comme en Pine), `strategy.py` (portage **exact** de `momentum_v1` : mêmes conditions, transitions uniquement, SL 1 %/TP 2 %, scores Phase 26 ; comparaisons « na-safe » comme Pine), `position.py` (position simulée pour répliquer le comportement d'alerte TradingView : SL/TP intrabar, SL prioritaire, `pyramiding=0` → un signal dans le sens de la position n'est PAS émis, renversement oui), `binance_client.py` (API publique klines, **aucune clé**, bougie en formation écartée), `webhook_client.py` (retry/backoff, 401 sans retry, secret jamais loggé), `runner.py` (poll 45 s → bougie fermée → évaluation → envoi), `backtest.py` (CLI de vérification du portage)
+  - Backend **inchangé** : même JSON que TradingView, pipeline identique ; `timestamp` = borne de clôture de bougie → fraîcheur OK (< 300 s) et dédup garantie après redémarrage (recalcul sans état depuis l'historique)
+  - Anti-repainting équivalent Pine : évaluation à la clôture uniquement, premier relevé sans émission (reconstruction de la position simulée depuis l'historique)
+  - Vérifié manuellement : backtest 30 j BTCUSDT 15m → 118 transitions brutes vs **27 signaux émis** (91 filtrés par la position simulée, comme TradingView l'aurait fait) ; client Binance en direct : 499/500 klines (la bougie en formation est bien écartée)
+  - Configuration `.env` : `ENGINE_ENABLED`, `ENGINE_SYMBOLS` (défaut BTCUSDT+ETHUSDT), `ENGINE_TIMEFRAME` (défaut 15), `ENGINE_POLL_SECONDS` (défaut 45), `ENGINE_WEBHOOK_URL` (surchargé en interne par compose) ; conteneur `engine` ajouté aux deux compose (POST interne `http://app:8000`, aucune exposition)
+  - Tests : 32 nouveaux (indicateurs à valeurs calculées à la main, transitions/portage, tracker de position, boucle runner avec fakes) — **157/157 passent**
 
 ## 🔧 En cours / à venir (par Claude)
 

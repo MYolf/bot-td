@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini .
 COPY migrations/ migrations/
 COPY app/ app/
+COPY engine/ engine/
 
 # Exécution sans privilèges.
 RUN useradd --create-home appuser && chown -R appuser:appuser /app

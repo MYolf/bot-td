@@ -110,6 +110,7 @@ Pipeline strict : auth → validation → déduplication → PostgreSQL → Disc
 - `app/discord/` — bot.py, commands.py, embeds.py (discord.py)
 - `app/services/` — discord_service.py, signal_service.py
 - `app/paper_trading/` — engine, positions, statistics (simulation locale uniquement)
+- `engine/` — moteur de signaux local (alternative gratuite à TradingView) : bougies Binance publiques → Momentum V1 à la clôture → même JSON vers le webhook ; conteneur dédié `engine` (docker-compose)
 - `tests/` — pytest + pytest-asyncio + httpx
 
 ## Points techniques clés
