@@ -1,28 +1,32 @@
-# bot-td — Bot Discord de signaux de trading (TradingView)
+# bot-td — Bot Discord de signaux de trading
 
-Système de **signalisation uniquement** : TradingView analyse les marchés (BTC, ETH, or, etc.) avec des stratégies Pine Script, envoie les signaux détectés (BUY/SELL, entrée, Stop Loss, Take Profit, timeframe, stratégie) à un backend via webhook, qui les valide, les déduplique, les enregistre dans PostgreSQL et les publie dans un salon Discord.
+Système de **signalisation uniquement** : une source de signaux détecte les opportunités (BUY/SELL, entrée, Stop Loss, Take Profit, timeframe, stratégie) et les envoie à un backend via webhook, qui les valide, les déduplique, les enregistre dans PostgreSQL et les publie dans un salon Discord.
+
+Deux sources possibles, au choix (JSON identique) :
+- **Moteur local** (`engine/`, par défaut) : portage Python de la stratégie Momentum V1, alimenté par les bougies publiques Binance — gratuit, sans compte ni clé, tourne sur le serveur ;
+- **TradingView** : stratégies Pine Script (`pine/`) avec alertes webhook (nécessite un abonnement).
 
 > **Règle fondamentale** : ce système **ne passe jamais d'ordre**. Pas de broker, pas d'exchange, pas de clé API de trading. La décision de trader reste entièrement humaine.
 
 ## Architecture
 
 ```
-TRADINGVIEW (Pine Strategy)
-        |  HTTPS POST (webhook, secret partagé)
-        v
-FASTAPI (/webhook/tradingview)
-        |
-        v
-SIGNAL PROCESSOR (auth, validation, cohérence, déduplication)
-        |
-        +------------------+
-        |                  |
-        v                  v
-   PostgreSQL          Discord Bot
-  (signaux,             (embeds,
-   stratégies,           commandes,
-   paper trades,         stats)
-   statistiques)
+MOTEUR LOCAL (engine/)                TRADINGVIEW (Pine Strategy)
+bougies Binance publiques             alerte webhook (abonnement)
+        |  POST interne                       |  HTTPS POST (secret partagé)
+        +---------------+--------------------+
+                        v
+              FASTAPI (/webhook/tradingview)
+                        |
+                        v
+      SIGNAL PROCESSOR (auth, validation, cohérence, déduplication)
+                        |
+            +-----------+--------------------+
+            |                                |
+            v                                v
+       PostgreSQL                       Discord Bot
+      (signaux, stratégies,             (embeds,
+       paper trades, statistiques)       commandes, stats)
 ```
 
 ## Stack
@@ -33,15 +37,17 @@ SIGNAL PROCESSOR (auth, validation, cohérence, déduplication)
 - Docker / Docker Compose
 - pytest, pytest-asyncio, httpx
 
-## Structure (cible)
+## Structure
 
 ```
-app/            # Application (config, api, discord, signals, database, services, ...)
-tests/          # Tests pytest
+app/            # Backend (config, api, discord, signals, database, services, paper_trading)
+engine/         # Moteur de signaux local (indicateurs, stratégie, position simulée, boucle)
+pine/           # Stratégies Pine Script TradingView
+tests/          # Tests pytest (157)
 migrations/     # Migrations Alembic
 ```
 
-Le cahier des charges complet et l'ordre des phases se trouvent dans `Projet.md`.
+Le cahier des charges complet et l'ordre des phases se trouvent dans `Projet.md` ; l'avancement détaillé dans `AVANCEMENT.md`.
 
 ## Installation (développement)
 

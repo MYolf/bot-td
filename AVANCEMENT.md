@@ -2,15 +2,14 @@
 
 > Fichier mis à jour au fil des phases. ✅ = fait, 🔧 = en cours, ⏳ = à faire, 👤 = à faire de TON côté.
 
-## 📍 Point d'avancement (2026-08-31)
+## 📍 Point d'avancement (2026-08-31) — PROJET TERMINÉ 🎉
 
-- **Phases terminées** : 0-15, 17, 18-29 (serveur de production EN LIGNE, voir § Phase 17 ci-dessous)
-- **Moteur de signaux local** (`engine/`) : alternative **gratuite** à TradingView (plan gratuit = pas d'alertes de stratégie/webhooks) — bougies Binance publiques → Momentum V1 à la clôture → même JSON vers le webhook. Voir § Moteur ci-dessous. **Déploiement VPS à faire** 👤
+- **Phases 0 → 30 toutes terminées**, y compris la Phase 30 (Production/clôture) : checklist §44 de Projet.md intégralement satisfaite (voir ci-dessous)
+- **Production EN LIGNE** depuis le 2026-08-29 : https://bot-td.duckdns.org (VPS OVH, HTTPS Caddy/Let's Encrypt)
+- **Moteur de signaux local DÉPLOYÉ** le 2026-08-31 : conteneur `engine` (BTCUSDT + ETHUSDT, 15m) tournant sur le VPS, positions simulées reconstruites au démarrage — valeurs identiques au backtest au centime près, première clôture SL détectée en direct
 - **Tests** : **157/157 passent** (`pytest`)
-- **Reste à faire (toi)** : déployer le conteneur `engine` sur le VPS (mise à jour standard `git pull` + `up -d --build`) ; Phase 16 (alerte TradingView réelle) devient **optionnelle** — le moteur la remplace tant qu'il n'y a pas d'abonnement TradingView
-- **Reste à faire (Claude)** : Phase 30 (clôture, avec toi)
-- Stack complète conteneurisée : `docker compose up -d --build` démarre app + PostgreSQL, applique les migrations et connecte le bot Discord
-- Pipeline opérationnel : TradingView **ou moteur local** (JSON identique) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash
+- **Phase 16 (alerte TradingView réelle)** : **optionnelle** à vie — le moteur local remplace TradingView tant qu'il n'y a pas d'abonnement (les stratégies Pine restent utilisables telles quelles si un abonnement est pris un jour)
+- Pipeline complet et automatique : moteur local (ou TradingView, JSON identique) → FastAPI → PostgreSQL → Discord, avec déduplication, paper trading en R, score de qualité et 5 commandes slash. **Aucune commande à faire : les embeds arrivent seuls dans le salon des signaux.**
 
 ## ✅ Terminé (par Claude)
 
@@ -137,10 +136,25 @@
   - Configuration `.env` : `ENGINE_ENABLED`, `ENGINE_SYMBOLS` (défaut BTCUSDT+ETHUSDT), `ENGINE_TIMEFRAME` (défaut 15), `ENGINE_POLL_SECONDS` (défaut 45), `ENGINE_WEBHOOK_URL` (surchargé en interne par compose) ; conteneur `engine` ajouté aux deux compose (POST interne `http://app:8000`, aucune exposition)
   - Tests : 32 nouveaux (indicateurs à valeurs calculées à la main, transitions/portage, tracker de position, boucle runner avec fakes) — **157/157 passent**
 
-## 🔧 En cours / à venir (par Claude)
+- **Phase 30 — Production/clôture** (Projet.md §44) — checklist « avant production » vérifiée ligne par ligne :
+  | Exigence §44 | État |
+  |---|---|
+  | HTTPS | ✅ Caddy + certificat Let's Encrypt auto-renouvelé (DNS challenge DuckDNS) |
+  | Domaine | ✅ `bot-td.duckdns.org` → VPS OVH |
+  | Secrets configurés | ✅ `.env` de production sur le VPS uniquement (jamais commité) |
+  | PostgreSQL sauvegardé | ✅ procédure `pg_dump` formalisée (MIGRATIONS.md, Phase 29) + backup automatisé OVH |
+  | Logs actifs | ✅ chaque étape du pipeline, contextes métier, jamais de secret (testé Phase 18) |
+  | Tests passants | ✅ 157/157 (`pytest`) |
+  | Discord connecté | ✅ bot en ligne, `/status` OK (vérifié sur le VPS) |
+  | Webhook testé | ✅ e2e : 200/sent, 401 secret invalide, duplicate (Phase 17) |
+  | TradingView testé | ✅ remplacé par le moteur local (`engine`), déployé et vérifié en direct le 2026-08-31 (positions reconstruites conformes au backtest, clôture SL détectée en temps réel) ; l'alerte TradingView réelle reste optionnelle |
+  | Déduplication testée | ✅ contrainte UNIQUE + e2e (jamais deux messages Discord) |
+  | Paper trading fonctionnel | ✅ positions virtuelles, résultats en R, `/stats` |
+- **Déploiement du moteur (2026-08-31)** : `git pull` + `up -d --build` sur le VPS → 4 conteneurs (app healthy, postgres, caddy, engine running) ; log de démarrage conforme : `Moteur démarré symbols=['BTCUSDT','ETHUSDT']`, `Premier relevé ... position simulée=...` (BTCUSDT short 78092.01 / ETHUSDT short 2440.28 = derniers signaux du backtest, au centime près)
 
-- **Phase 30 — Production** : durcissement final, déploiement, supervision
-- **Phase 16-17** — Alertes TradingView réelles + connexion (👤 nécessite des actions de ta part : coller la stratégie dans TradingView, créer l'alerte, serveur HTTPS public)
+## 🔧 En cours / à venir
+
+Rien — le projet est complet. Pistes futures (hors périmètre Projet.md, à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), porter `momentum_mtf_v1`, prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
@@ -227,13 +241,13 @@ Dans l'ordre, Claude guide chaque commande :
 8. Vérifications : `https://bot-td.duckdns.org/health` → 200 ; webhook sans secret → 401 ;
    bot Discord connecté (`/status` dans Discord)
 
-#### Étape C — Créer l'alerte TradingView réelle (👤 toi, Phase 16, ~15 min) — DERNIÈRE ÉTAPE RESTANTE
+#### Étape C — Créer l'alerte TradingView réelle (OPTIONNELLE — remplacée par le moteur local)
 
 URL du webhook à renseigner dans TradingView :
 `https://bot-td.duckdns.org/webhook/tradingview`
 (Instructions pas à pas détaillées fournies quand le serveur sera en ligne.)
 
-### ⏳ 3. Phase 16 — créer l'alerte TradingView réelle
+### ⏳ 3. Phase 16 — créer l'alerte TradingView réelle (optionnelle, si abonnement TradingView un jour)
 1. Suivant la vérification ci-dessus : stratégie **Momentum V1** ou **Momentum MTF V1** sur le graphique
 2. Renseigner le **Secret webhook** dans les paramètres de la stratégie (valeur `TRADINGVIEW_WEBHOOK_SECRET` du `.env`)
 3. Créer l'alerte : condition **la stratégie**, type **Order fills**, message `{{strategy.order.alert_message}}`, **Once Per Bar Close**

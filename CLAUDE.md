@@ -47,7 +47,11 @@ Bot Discord de signaux de trading : TradingView (stratégies Pine Script) envoie
 
 ## État actuel
 
-Le dépôt est un scaffold initial : README.md, Projet.md (cahier des charges complet), .env.example, .gitignore. Le code (`app/`, `tests/`, `migrations/`, requirements.txt, Dockerfile, docker-compose.yml) reste à créer en suivant les phases de Projet.md.
+Projet **terminé et en production** depuis le 2026-08-31 (Phases 0 → 30 de Projet.md). Suivi détaillé dans `AVANCEMENT.md`.
+
+- Backend FastAPI + bot Discord + PostgreSQL conteneurisés, en ligne sur un VPS OVH derrière Caddy HTTPS (`https://bot-td.duckdns.org`), e2e validé.
+- Source de signaux : **moteur local `engine/`** (conteneur dédié) — bougies Binance publiques → portage Python de `momentum_v1` à la clôture de bougie → même JSON que TradingView vers le webhook. Alternative gratuite à TradingView (le plan gratuit n'autorise ni alertes de stratégie ni webhooks). Les stratégies Pine (`pine/`) restent utilisables si un abonnement TradingView est pris.
+- Les évolutions futures (nouveaux symboles/timeframes via `ENGINE_*`/`ALLOWED_*` dans `.env`, nouvelles stratégies, etc.) doivent préserver la règle fondamentale ci-dessous et les garanties existantes (tests passants, dédup, anti-repainting).
 
 ## Workflow de développement imposé (Projet.md §48-50)
 
