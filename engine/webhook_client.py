@@ -22,23 +22,16 @@ class WebhookError(Exception):
     """Échec définitif de l'envoi du signal."""
 
 
-async def send_signal(
+async def _post_json(
     client: httpx.AsyncClient,
-    webhook_url: str,
+    url: str,
     payload: dict,
+    context: str,
 ) -> dict:
-    """POST le signal ; retourne la réponse JSON du backend.
-
-    Réponses 200 attendues : {"status": "sent"}, "duplicate", "rejected"...
-    (le backend répond 200 même pour un rejet métier — comportement normal).
-    """
-    context = (
-        f"strategy={payload.get('strategy')} symbol={payload.get('symbol')} "
-        f"timeframe={payload.get('timeframe')} action={payload.get('action')}"
-    )
+    """POST JSON avec retry (erreur réseau / 5xx) ; 401 = échec définitif."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            response = await client.post(webhook_url, json=payload, timeout=10.0)
+            response = await client.post(url, json=payload, timeout=10.0)
         except httpx.HTTPError as exc:
             logger.warning(
                 "Webhook injoignable (%s) tentative %d/%d : %s",
@@ -77,3 +70,37 @@ async def send_signal(
         raise WebhookError(f"webhook en échec : statut {response.status_code}")
 
     raise WebhookError("webhook en échec")  # inatteignable, garde-fou typage
+
+
+async def send_signal(
+    client: httpx.AsyncClient,
+    webhook_url: str,
+    payload: dict,
+) -> dict:
+    """POST le signal ; retourne la réponse JSON du backend.
+
+    Réponses 200 attendues : {"status": "sent"}, "duplicate", "rejected"...
+    (le backend répond 200 même pour un rejet métier — comportement normal).
+    """
+    context = (
+        f"strategy={payload.get('strategy')} symbol={payload.get('symbol')} "
+        f"timeframe={payload.get('timeframe')} action={payload.get('action')}"
+    )
+    return await _post_json(client, webhook_url, payload, context)
+
+
+async def send_price_update(
+    client: httpx.AsyncClient,
+    price_url: str,
+    payload: dict,
+) -> dict:
+    """POST une bougie fermée vers POST /internal/prices du backend.
+
+    Même mécanique de retry que les signaux ; le secret ne figure jamais
+    dans les logs.
+    """
+    context = (
+        f"price-update symbol={payload.get('symbol')} "
+        f"timeframe={payload.get('timeframe')} open_time={payload.get('open_time')}"
+    )
+    return await _post_json(client, price_url, payload, context)

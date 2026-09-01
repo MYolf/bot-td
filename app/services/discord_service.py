@@ -58,9 +58,12 @@ class DiscordService:
         return message.id
 
 
-# --- Instance courante, branchée dans le lifespan de app.main ---
+# --- Instances courantes, branchées dans le lifespan de app.main ---
 
 _notifier: SignalNotifier | None = None
+# Notifieur du salon récap quotidien (clôtures TP/SL, résumé de 22h) : peut
+# rester None (salon non configuré) — les notifications sont alors ignorées.
+_recap_notifier: SignalNotifier | None = None
 
 
 def set_notifier(notifier: SignalNotifier | None) -> None:
@@ -74,3 +77,34 @@ def provide_notifier() -> SignalNotifier:
     if _notifier is None:
         raise RuntimeError("Notifieur Discord non initialisé")
     return _notifier
+
+
+def set_recap_notifier(notifier: SignalNotifier | None) -> None:
+    """Enregistre le notifieur du salon récap (None = désactivé)."""
+    global _recap_notifier
+    _recap_notifier = notifier
+
+
+def provide_recap_notifier() -> SignalNotifier | None:
+    """Dépendance FastAPI : notifieur du salon récap (None si non configuré)."""
+    return _recap_notifier
+
+
+async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:
+    """Publie l'embed de clôture d'une position paper dans le salon récap.
+
+    Best-effort : un échec d'envoi est loggé et n'affecte jamais le pipeline
+    (la clôture reste enregistrée en base).
+    """
+    if notifier is None:
+        return
+    from app.discord.embeds import build_closure_embed
+
+    try:
+        await notifier.send_signal(build_closure_embed(outcome))
+    except DiscordSendError:
+        logger.error(
+            "Notification de clôture échouée position_id=%s symbol=%s (ignoré)",
+            outcome.position_id,
+            outcome.symbol,
+        )

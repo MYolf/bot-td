@@ -210,3 +210,65 @@ async def test_signal_oppose_emis_en_renversement(engine_settings, monkeypatch) 
         await engine.poll_once()
 
     assert [p["action"] for p in sender.payloads] == ["BUY", "SELL"]
+
+
+# --- Price updates (bougie fermée -> POST /internal/prices) ---
+
+async def test_price_update_envoye_a_chaque_nouvelle_bougie(engine_settings) -> None:
+    nouvelle = make_candles(301)
+    fetcher = FakeFetcher([make_candles(300), nouvelle, make_candles(302)])
+    price_sender = FakeSender()
+    engine = SignalEngine(
+        engine_settings, fetcher, FakeSender(), price_sender=price_sender
+    )
+
+    await engine.poll_once()  # premier relevé : rien (reconstruction)
+    await engine.poll_once()  # nouvelle bougie -> price update
+    await engine.poll_once()  # nouvelle bougie -> price update
+
+    assert len(price_sender.payloads) == 2
+    payload = price_sender.payloads[0]
+    derniere = nouvelle[-1]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["timeframe"] == "15"
+    assert payload["open_time"] == derniere.open_time
+    assert payload["high"] == derniere.high
+    assert payload["low"] == derniere.low
+    assert payload["secret"] == "secret-test"
+
+
+async def test_premier_releve_nenvoie_pas_de_price_update(engine_settings) -> None:
+    fetcher = FakeFetcher([make_candles(300)])
+    price_sender = FakeSender()
+    engine = SignalEngine(engine_settings, fetcher, FakeSender(), price_sender=price_sender)
+
+    await engine.poll_once()
+
+    assert price_sender.payloads == []
+
+
+async def test_price_update_sans_envoyeur_nenvoie_rien(engine_settings) -> None:
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    engine = SignalEngine(engine_settings, fetcher, FakeSender())  # sans price_sender
+
+    await engine.poll_once()
+    await engine.poll_once()  # ne doit pas lever
+
+
+async def test_echec_price_update_absorbe(engine_settings) -> None:
+    class PriceSenderEnEchec:
+        def __init__(self):
+            self.appels = 0
+
+        async def __call__(self, payload: dict) -> dict:
+            self.appels += 1
+            raise RuntimeError("backend injoignable (test)")
+
+    price_sender = PriceSenderEnEchec()
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    engine = SignalEngine(engine_settings, fetcher, FakeSender(), price_sender=price_sender)
+
+    await engine.poll_once()
+    await engine.poll_once()  # échec loggé, pas de crash
+
+    assert price_sender.appels == 1

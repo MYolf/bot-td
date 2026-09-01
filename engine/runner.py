@@ -4,7 +4,9 @@ Chaque cycle :
 1. récupérer les bougies FERMÉES de chaque symbole (API publique Binance) ;
 2. si une NOUVELLE bougie fermée est apparue, évaluer Momentum V1 sur
    l'historique (la nouvelle bougie devient la dernière bougie fermée) ;
-3. en cas de transition, POST le signal vers le webhook du backend.
+3. POSTer la bougie fermée vers /internal/prices du backend (le paper trading
+   clôture les positions au TP/SL sans attendre le signal suivant) ;
+4. en cas de transition, POST le signal vers le webhook du backend.
 
 Garanties :
 - la bougie en cours de formation n'est JAMAIS évaluée (anti-repainting) ;
@@ -38,7 +40,7 @@ from engine.strategy import (
     build_payload,
     evaluate_momentum_v1,
 )
-from engine.webhook_client import send_signal
+from engine.webhook_client import send_price_update, send_signal
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +58,13 @@ class SignalEngine:
         fetcher: Fetcher,
         sender: Sender,
         params: MomentumParams | None = None,
+        price_sender: Sender | None = None,
     ) -> None:
         self._settings = settings
         self._fetcher = fetcher
         self._sender = sender
         self._params = params or MomentumParams()
+        self._price_sender = price_sender
         self._last_open_time: dict[str, int] = {}
         self._trackers: dict[str, PositionTracker] = {}
 
@@ -100,7 +104,10 @@ class SignalEngine:
                 continue
 
             tracker = self._trackers[symbol]
-            # 1) La nouvelle bougie peut refermer la position en cours (SL/TP).
+            # 1) La nouvelle bougie est envoyée au backend : le paper trading
+            #    peut clôturer ses positions au TP/SL dès maintenant (best-effort).
+            await self._send_price(symbol, last)
+            # 2) La nouvelle bougie peut refermer la position simulée (SL/TP).
             exit_reason = tracker.apply_candle(last)
             if exit_reason is not None:
                 logger.info(
@@ -110,11 +117,11 @@ class SignalEngine:
                     last.open_time,
                 )
 
-            # 2) Transition sur la nouvelle bougie fermée ?
+            # 3) Transition sur la nouvelle bougie fermée ?
             result = evaluate_momentum_v1(candles, self._params)
             if result is None:
                 continue
-            # 3) Fidélité TradingView : n'émettre que si un ordre simulé
+            # 4) Fidélité TradingView : n'émettre que si un ordre simulé
             #    s'exécuterait (plat ou renversement ; pyramiding = 0).
             if not tracker.would_fill(result.action):
                 logger.info(
@@ -127,6 +134,33 @@ class SignalEngine:
                 continue
             tracker.open(result.action, result.entry, result.stop_loss, result.take_profit)
             await self._emit(symbol, result)
+
+    async def _send_price(self, symbol: str, candle: Candle) -> None:
+        """POSTe une bougie fermée vers /internal/prices (best-effort).
+
+        Un échec est loggé sans jamais interrompre le cycle : la bougie
+        suivante permettra de rattraper la vérification TP/SL.
+        """
+        if self._price_sender is None:
+            return
+        payload = {
+            "secret": self._settings.tradingview_webhook_secret,
+            "symbol": symbol,
+            "timeframe": self._settings.engine_timeframe,
+            "open_time": candle.open_time,
+            "open": candle.open,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+        }
+        try:
+            await self._price_sender(payload)
+        except Exception:
+            logger.exception(
+                "Envoi price update échoué symbol=%s bougie=%s (rattrapé à la bougie suivante)",
+                symbol,
+                candle.open_time,
+            )
 
     async def _emit(self, symbol: str, result: SignalResult) -> None:
         payload = build_payload(
@@ -179,7 +213,16 @@ async def _main_async() -> None:
         async def sender(payload: dict) -> dict:
             return await send_signal(client, settings.engine_webhook_url, payload)
 
-        engine = SignalEngine(settings, fetcher, sender)
+        price_sender: Sender | None = None
+        if settings.engine_price_url:
+            price_url = settings.engine_price_url
+
+            async def price_sender_fn(payload: dict) -> dict:  # noqa: F811
+                return await send_price_update(client, price_url, payload)
+
+            price_sender = price_sender_fn
+
+        engine = SignalEngine(settings, fetcher, sender, price_sender=price_sender)
         await engine.run()
 
 

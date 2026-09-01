@@ -264,11 +264,14 @@ class PaperRepository:
         await self._session.flush()
         return position
 
-    async def open_with_signal_by_symbol(self, symbol: str) -> list[tuple[PaperPosition, Signal]]:
-        """Positions ouvertes d'un symbole, avec le signal d'origine."""
+    async def open_with_signal_by_symbol(
+        self, symbol: str
+    ) -> list[tuple[PaperPosition, Signal, str]]:
+        """Positions ouvertes d'un symbole, avec le signal et la stratégie d'origine."""
         stmt = (
-            select(PaperPosition, Signal)
+            select(PaperPosition, Signal, Strategy.name)
             .join(Signal, PaperPosition.signal_id == Signal.id)
+            .join(Strategy, Signal.strategy_id == Strategy.id)
             .where(PaperPosition.status == "OPEN", Signal.symbol == symbol)
             .order_by(PaperPosition.id)
         )
@@ -325,3 +328,43 @@ class PaperRepository:
             )
             or 0
         )
+
+    # --- Récap quotidien (positions ouvertes/clôturées par période) ---
+
+    async def opened_between(
+        self, start: datetime, end: datetime
+    ) -> list[tuple[PaperPosition, Signal, str]]:
+        """Positions ouvertes entre start et end (bornes UTC), avec signal."""
+        stmt = (
+            select(PaperPosition, Signal, Strategy.name)
+            .join(Signal, PaperPosition.signal_id == Signal.id)
+            .join(Strategy, Signal.strategy_id == Strategy.id)
+            .where(PaperPosition.opened_at >= start, PaperPosition.opened_at < end)
+            .order_by(PaperPosition.opened_at)
+        )
+        return list((await self._session.execute(stmt)).all())
+
+    async def closed_between(
+        self, start: datetime, end: datetime
+    ) -> list[tuple[PaperPosition, PaperTrade, Signal, str]]:
+        """Positions clôturées entre start et end, avec trade, signal, stratégie."""
+        stmt = (
+            select(PaperPosition, PaperTrade, Signal, Strategy.name)
+            .join(PaperTrade, PaperTrade.paper_position_id == PaperPosition.id)
+            .join(Signal, PaperPosition.signal_id == Signal.id)
+            .join(Strategy, Signal.strategy_id == Strategy.id)
+            .where(PaperPosition.closed_at >= start, PaperPosition.closed_at < end)
+            .order_by(PaperPosition.closed_at)
+        )
+        return list((await self._session.execute(stmt)).all())
+
+    async def open_all(self) -> list[tuple[PaperPosition, Signal, str]]:
+        """Toutes les positions ouvertes (tous symboles), avec signal."""
+        stmt = (
+            select(PaperPosition, Signal, Strategy.name)
+            .join(Signal, PaperPosition.signal_id == Signal.id)
+            .join(Strategy, Signal.strategy_id == Strategy.id)
+            .where(PaperPosition.status == "OPEN")
+            .order_by(PaperPosition.opened_at)
+        )
+        return list((await self._session.execute(stmt)).all())

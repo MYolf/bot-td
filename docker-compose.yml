@@ -38,6 +38,7 @@ services:
     env_file: .env
     environment:
       ENGINE_WEBHOOK_URL: http://app:8000/webhook/tradingview
+      ENGINE_PRICE_URL: http://app:8000/internal/prices
     depends_on:
       app:
         condition: service_healthy

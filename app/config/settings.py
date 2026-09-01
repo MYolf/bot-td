@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     discord_logs_channel_id: int | None = Field(
         default=None, alias="DISCORD_LOGS_CHANNEL_ID"
     )
+    # Salon du suivi des trades : clôtures TP/SL en direct + récap quotidien.
+    discord_recap_channel_id: int | None = Field(
+        default=None, alias="DISCORD_RECAP_CHANNEL_ID"
+    )
+
+    # --- Récap hebdomadaire du paper trading (vendredi par défaut) ---
+    recap_enabled: bool = Field(default=True, alias="RECAP_ENABLED")
+    # Jour d'envoi (date.weekday() : lundi=0 ... dimanche=6 ; 4 = vendredi).
+    recap_weekday: int = Field(default=4, alias="RECAP_WEEKDAY")
+    # Heure d'envoi, dans le fuseau recap_timezone (heure locale).
+    recap_hour: int = Field(default=22, alias="RECAP_HOUR")
+    recap_timezone: str = Field(default="Europe/Paris", alias="RECAP_TIMEZONE")
 
     # --- Webhook TradingView ---
     tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")

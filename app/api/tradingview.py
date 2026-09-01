@@ -21,7 +21,13 @@ from app.database.database import provide_session_factory
 from app.database.repository import SignalRepository, StrategyRepository, compute_risk_reward
 from app.discord.embeds import build_signal_embed
 from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
-from app.services.discord_service import DiscordSendError, SignalNotifier, provide_notifier
+from app.services.discord_service import (
+    DiscordSendError,
+    SignalNotifier,
+    notify_closure,
+    provide_notifier,
+    provide_recap_notifier,
+)
 from app.signals.scoring import compute_score
 from app.signals.schemas import TradingViewSignal
 from app.signals.validator import validate_signal
@@ -40,6 +46,7 @@ async def receive_tradingview_signal(
         async_sessionmaker[AsyncSession], Depends(provide_session_factory)
     ],
     notifier: Annotated[SignalNotifier, Depends(provide_notifier)],
+    recap_notifier: Annotated[SignalNotifier | None, Depends(provide_recap_notifier)],
     paper_engine: Annotated[PaperTradingEngine | None, Depends(provide_paper_engine)],
 ) -> dict:
     logger.info(
@@ -115,7 +122,7 @@ async def receive_tradingview_signal(
     # loggé et le pipeline continue (notification Discord inchangée).
     if paper_engine is not None:
         try:
-            await paper_engine.process_signal(
+            outcomes = await paper_engine.process_signal(
                 signal_id=insert.signal_id,
                 symbol=signal.symbol,
                 action=signal.action,
@@ -123,6 +130,10 @@ async def receive_tradingview_signal(
                 stop_loss=Decimal(str(signal.stop_loss)),
                 take_profit=Decimal(str(signal.take_profit)),
             )
+            # Une position ancienne peut être clôturée par le prix de ce
+            # signal : notification dans le salon récap (best-effort).
+            for outcome in outcomes:
+                await notify_closure(outcome, recap_notifier)
         except Exception:
             logger.exception(
                 "Paper trading échoué signal_id=%s (signal conservé, pas d'impact)",

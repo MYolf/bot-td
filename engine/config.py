@@ -31,6 +31,12 @@ class EngineSettings(BaseSettings):
     engine_webhook_url: str = Field(
         default="http://localhost:8000/webhook/tradingview", alias="ENGINE_WEBHOOK_URL"
     )
+    # Endpoint interne du backend : chaque bougie fermée y est POSTée pour que
+    # le paper trading puisse clôturer les positions au TP/SL sans attendre le
+    # signal suivant. Une URL vide désactive l'envoi.
+    engine_price_url: str | None = Field(
+        default="http://localhost:8000/internal/prices", alias="ENGINE_PRICE_URL"
+    )
     # Historique récupéré à chaque sondage : 500 >> EMA200 + amorce MACD.
     engine_candle_limit: int = Field(default=500, alias="ENGINE_CANDLE_LIMIT")
 

@@ -27,6 +27,7 @@ def selector_loop() -> asyncio.SelectorEventLoop:
     """
     return asyncio.SelectorEventLoop()
 
+from app.api.internal import router as internal_router
 from app.api.tradingview import router as tradingview_router
 from app.config.settings import get_settings
 from app.utils.logging import setup_logging
@@ -41,9 +42,14 @@ async def lifespan(app: FastAPI):
     logger.info("Application démarrée environnement=%s", settings.app_env)
 
     bot_task: asyncio.Task | None = None
+    recap_task: asyncio.Task | None = None
     if settings.discord_enabled:
         from app.discord.bot import create_bot, run_bot
-        from app.services.discord_service import DiscordService, set_notifier
+        from app.services.discord_service import (
+            DiscordService,
+            set_notifier,
+            set_recap_notifier,
+        )
 
         bot = create_bot(settings)
         # Un seul loop : celui de FastAPI/Uvicorn, pas de thread séparé.
@@ -57,6 +63,11 @@ async def lifespan(app: FastAPI):
         set_notifier(
             DiscordService(bot, settings.discord_signals_channel_id)
         )
+        # Notifieur du salon récap : clôtures TP/SL en direct + récap quotidien.
+        if settings.discord_recap_channel_id is not None:
+            set_recap_notifier(
+                DiscordService(bot, settings.discord_recap_channel_id)
+            )
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
@@ -71,8 +82,38 @@ async def lifespan(app: FastAPI):
 
     init_paper_engine(get_session_factory())
 
+    # --- Récap hebdomadaire (vendredi 22h heure locale par défaut) ---
+    if settings.discord_enabled and settings.recap_enabled:
+        from app.services.discord_service import provide_recap_notifier
+        from app.services.weekly_recap import WeeklyRecapService
+
+        recap_notifier = provide_recap_notifier()
+        if recap_notifier is None:
+            logger.warning(
+                "Récap hebdomadaire activé mais DISCORD_RECAP_CHANNEL_ID non configuré (désactivé)"
+            )
+        else:
+            recap_task = asyncio.create_task(
+                WeeklyRecapService(
+                    get_session_factory(),
+                    recap_notifier,
+                    hour=settings.recap_hour,
+                    weekday=settings.recap_weekday,
+                    timezone_name=settings.recap_timezone,
+                ).run(),
+                name="weekly-recap",
+            )
+            logger.info("Démarrage du récap hebdomadaire en tâche de fond")
+
     yield
 
+    if recap_task is not None:
+        recap_task.cancel()
+        try:
+            await recap_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Récap hebdomadaire arrêté")
     shutdown_paper_engine()
 
     if bot_task is not None:
@@ -82,9 +123,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("Bot Discord arrêté")
-    from app.services.discord_service import set_notifier
+    from app.services.discord_service import set_notifier, set_recap_notifier
 
     set_notifier(None)
+    set_recap_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 
@@ -97,6 +139,7 @@ app = FastAPI(
 )
 
 app.include_router(tradingview_router)
+app.include_router(internal_router)
 
 
 @app.exception_handler(Exception)

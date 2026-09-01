@@ -213,3 +213,115 @@ def build_strategies_embed(strategies: list, compte: dict[str, int]) -> discord.
             inline=True,
         )
     return embed
+
+
+# --- Suivi des trades : clôtures et récap quotidien ---
+
+ORANGE = 0xE67E22  # récap quotidien
+
+
+def build_closure_embed(outcome) -> discord.Embed:
+    """Embed d'une position paper clôturée (TP ou SL détecté à la bougie).
+
+    `outcome` : `app.paper_trading.engine.CloseOutcome`.
+    """
+    is_tp = outcome.exit_reason == "TP"
+    titre = "✅ Take Profit atteint" if is_tp else "❌ Stop Loss atteint"
+    is_buy = outcome.action == "BUY"
+    embed = discord.Embed(
+        title=f"{titre} — {outcome.symbol}",
+        color=GREEN if is_tp else RED,
+    )
+    embed.add_field(name="Position", value="LONG 🟢" if is_buy else "SHORT 🔴", inline=True)
+    embed.add_field(name="Strategy", value=strategy_label(outcome.strategy), inline=True)
+    embed.add_field(name="Entry", value=format_price(outcome.entry_price), inline=True)
+    embed.add_field(name="Sortie", value=format_price(outcome.exit_price), inline=True)
+    signe = "+" if outcome.result_r > 0 else ""
+    embed.add_field(name="Résultat", value=f"{signe}{outcome.result_r.normalize()} R", inline=True)
+    embed.set_footer(text="Paper trading — simulation locale, aucun ordre réel")
+    return embed
+
+
+def build_weekly_recap_embed(
+    *,
+    debut: datetime,
+    fin: datetime,
+    ouvertes_semaine: list,
+    cloturees_semaine: list,
+    en_cours: list,
+) -> discord.Embed:
+    """Embed du récap hebdomadaire (vendredi 22h, heure locale configurée).
+
+    - `ouvertes_semaine` : lignes (PaperPosition, Signal, nom de stratégie)
+      ouvertes sur les 7 derniers jours ;
+    - `cloturees_semaine` : lignes (PaperPosition, PaperTrade, Signal, nom de
+      stratégie) clôturées sur les 7 derniers jours ;
+    - `en_cours` : TOUTES les positions ouvertes — elles restent dans chaque
+      récap jusqu'à leur TP/SL.
+    """
+    embed = discord.Embed(
+        title=(
+            f"📅 Récap hebdomadaire — semaine du "
+            f"{debut.strftime('%d/%m/%Y')} au {fin.strftime('%d/%m/%Y')}"
+        ),
+        color=ORANGE,
+    )
+
+    lignes_ouvertes = [
+        f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
+        f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
+        f"{strategy_label(strategy_name)} · entry {format_price(signal.entry_price)} · "
+        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)}"
+        for _position, signal, strategy_name in ouvertes_semaine
+    ]
+    embed.add_field(
+        name=f"📈 Nouvelles positions ({len(ouvertes_semaine)})",
+        value="\n".join(lignes_ouvertes) or "—",
+        inline=False,
+    )
+
+    lignes_cloturees = []
+    total_r = Decimal("0")
+    for _position, trade, signal, strategy_name in cloturees_semaine:
+        gagnant = trade.exit_reason == "TP"
+        total_r += _position.result_r
+        signe = "+" if _position.result_r > 0 else ""
+        lignes_cloturees.append(
+            f"{'✅' if gagnant else '❌'} **{signal.symbol}** "
+            f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
+            f"{'TP' if gagnant else 'SL'} @ {format_price(trade.exit_price)} · "
+            f"{signe}{_position.result_r.normalize()} R"
+        )
+    embed.add_field(
+        name=f"🏁 Clôturées cette semaine ({len(cloturees_semaine)})",
+        value="\n".join(lignes_cloturees) or "—",
+        inline=False,
+    )
+
+    lignes_cours = [
+        f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
+        f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
+        f"depuis le {_as_utc(position.opened_at).strftime('%d/%m %H:%M')} UTC · "
+        f"entry {format_price(signal.entry_price)} · "
+        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)}"
+        for position, signal, strategy_name in en_cours
+    ]
+    embed.add_field(
+        name=f"⏳ En cours ({len(en_cours)})",
+        value="\n".join(lignes_cours) or "—",
+        inline=False,
+    )
+
+    signe = "+" if total_r > 0 else ""
+    embed.add_field(
+        name="Résultat de la semaine",
+        value=f"{signe}{total_r.normalize()} R"
+        if cloturees_semaine
+        else "Aucune clôture cette semaine",
+        inline=False,
+    )
+    embed.set_footer(
+        text="Paper trading — simulation locale en R, aucun ordre réel · "
+        "les positions en cours restent affichées chaque semaine jusqu'à TP/SL"
+    )
+    return embed

@@ -12,6 +12,7 @@ appel réseau vers un broker ou un exchange (règle absolue du projet).
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -19,6 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.database.repository import PaperRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite retourne des datetimes naïfs : ils représentent toujours de
+    l'UTC dans ce projet."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def resolve_exit(
@@ -54,13 +63,47 @@ def result_in_r(exit_reason: str, risk_reward: Decimal) -> Decimal:
     return Decimal("-1")
 
 
+def resolve_exit_candle(
+    action: str,
+    high: Decimal,
+    low: Decimal,
+    stop_loss: Decimal,
+    take_profit: Decimal,
+) -> str | None:
+    """Détermine la sortie d'une position pour une bougie OHLC complète.
+
+    BUY : SL si low <= stop_loss, TP si high >= take_profit (SL prioritaire si
+    les deux sont touchés — hypothèse prudente, fidèle au moteur engine/).
+    SELL : inverse.
+    """
+    if action == "BUY":
+        if low <= stop_loss:
+            return "SL"
+        if high >= take_profit:
+            return "TP"
+    else:  # SELL
+        if high >= stop_loss:
+            return "SL"
+        if low <= take_profit:
+            return "TP"
+    return None
+
+
 @dataclass(frozen=True)
 class CloseOutcome:
     """Une position clôturée par le moteur."""
 
     position_id: int
+    signal_id: int
     symbol: str
+    strategy: str
+    action: str
+    entry_price: Decimal
+    stop_loss: Decimal
+    take_profit: Decimal
+    risk_reward: Decimal
     exit_reason: str
+    exit_price: Decimal
     result_r: Decimal
 
 
@@ -105,13 +148,85 @@ class PaperTradingEngine:
             await session.commit()
         return closed
 
+    async def check_candle(
+        self,
+        *,
+        symbol: str,
+        high: Decimal,
+        low: Decimal,
+        candle_start: datetime,
+    ) -> list[CloseOutcome]:
+        """Vérifie les positions ouvertes du symbole contre une bougie fermée.
+
+        Anti-lookahead : une position n'est jamais vérifiée contre la bougie
+        qui l'a créée — le timestamp du signal est la borne de clôture de sa
+        bougie, donc seules les positions dont signal_timestamp <= début de la
+        bougie reçue sont concernées (la bougie SUIVANTE au plus tôt).
+        """
+        async with self._session_factory() as session:
+            repository = PaperRepository(session)
+            outcomes: list[CloseOutcome] = []
+            for position, signal, strategy_name in await repository.open_with_signal_by_symbol(symbol):
+                if _as_utc(signal.signal_timestamp) > candle_start:
+                    continue  # position ouverte à la clôture de cette même bougie
+                exit_reason = resolve_exit_candle(
+                    signal.action, high, low, signal.stop_loss, signal.take_profit
+                )
+                if exit_reason is None:
+                    continue
+                exit_price = (
+                    signal.stop_loss if exit_reason == "SL" else signal.take_profit
+                )
+                outcomes.append(
+                    await self._close(
+                        repository, position, signal, strategy_name, exit_reason, exit_price
+                    )
+                )
+            await session.commit()
+        return outcomes
+
+    async def _close(
+        self,
+        repository: PaperRepository,
+        position,
+        signal,
+        strategy_name: str,
+        exit_reason: str,
+        exit_price: Decimal,
+    ) -> CloseOutcome:
+        result_r = result_in_r(exit_reason, signal.risk_reward)
+        await repository.close_position(
+            position, exit_reason=exit_reason, exit_price=exit_price, result_r=result_r
+        )
+        logger.info(
+            "Position paper clôturée id=%s symbol=%s sortie=%s résultat=%sR",
+            position.id,
+            signal.symbol,
+            exit_reason,
+            result_r,
+        )
+        return CloseOutcome(
+            position_id=position.id,
+            signal_id=signal.id,
+            symbol=signal.symbol,
+            strategy=strategy_name,
+            action=signal.action,
+            entry_price=signal.entry_price,
+            stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit,
+            risk_reward=signal.risk_reward,
+            exit_reason=exit_reason,
+            exit_price=exit_price,
+            result_r=result_r,
+        )
+
     async def _check_symbol(
         self, repository: PaperRepository, symbol: str, price: Decimal
     ) -> list[CloseOutcome]:
         """Clôture toute position ouverte du symbole dont le SL ou le TP est
         atteint par ce prix."""
         outcomes: list[CloseOutcome] = []
-        for position, signal in await repository.open_with_signal_by_symbol(symbol):
+        for position, signal, strategy_name in await repository.open_with_signal_by_symbol(symbol):
             exit_reason = resolve_exit(
                 signal.action,
                 price,
@@ -120,24 +235,10 @@ class PaperTradingEngine:
             )
             if exit_reason is None:
                 continue
-            result_r = result_in_r(exit_reason, signal.risk_reward)
-            await repository.close_position(
-                position, exit_reason=exit_reason, exit_price=price, result_r=result_r
-            )
             outcomes.append(
-                CloseOutcome(
-                    position_id=position.id,
-                    symbol=symbol,
-                    exit_reason=exit_reason,
-                    result_r=result_r,
+                await self._close(
+                    repository, position, signal, strategy_name, exit_reason, price
                 )
-            )
-            logger.info(
-                "Position paper clôturée id=%s symbol=%s sortie=%s résultat=%sR",
-                position.id,
-                symbol,
-                exit_reason,
-                result_r,
             )
         return outcomes
 
