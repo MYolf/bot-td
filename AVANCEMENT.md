@@ -165,7 +165,11 @@ Objectif : plusieurs stratégies + confluence multi-dimensionnelle. Spécificati
   - `engine/feature_study.py` : étude forward returns conditionnels (4/16/48 bougies) — étape 1 du protocole anti-overfitting
   - 14 nouveaux tests dont **propriété de préfixe** (anti-lookahead) pour toutes les features — 201/201 passent
   - Première étude réelle BTCUSDT 15m 90 j : RVOL≥2 = meilleur profil ; états bearish > bullish sur la fenêtre (signature mean-reversion) ; tout est sous le seuil de frais à h=4 → la sélection de signaux sera déterminante. Une seule fenêtre = aucune conclusion définitive.
-- ⏳ **Étape 2** : liquidity sweeps, Order Blocks, FVG, displacement (définitions objectives de CONFLUENCE.md), puis étude individuelle de chaque feature
+- ✅ **Étape 2 — Zones et liquidité** (2026-09-01) :
+  - `engine/structure.py` : `liquidity_sweeps` — percée d'un swing confirmé (profondeur ≥ 0.1×ATR, âge ≥ 10 bougies), clôture de récupération dans ≤ 3 bougies ; cassure profonde = swing mort ; un swing = un balayage
+  - `engine/zones.py` : `displacements` (run ≤ 3 bougies ≥ 1.5×ATR, émis une fois par run), `fair_value_gaps` (gap 3 bougies ≥ 0.25×ATR, retest/remplissage total/expiration, flag `with_displacement`), `order_blocks` (BOS porté par un displacement → dernière bougie opposée, retest/mitigation 50 %/invalidation/expiration)
+  - `feature_study` étendu ; 12 nouveaux tests (dont préfixe pour zones : les champs de suivi ne peuvent différer que par des valeurs postérieures à la coupure) — **213/213 passent**
+  - Étude 90 j BTC **et** ETH : **sweep bullish = meilleur déclencheur** (h16 : BTC +0.153 % win 61.5 %, ETH +0.198 % win 64.1 % — au-dessus du seuil de frais sur les DEUX symboles) ; FVG « avec displacement » > « sans » sur les deux (hypothèse validée) ; OB retest fort sur ETH (+0.368 % h48) mais pas BTC ; mean-reversion confirmée partout. Une fenêtre = pas de conclusion définitive, mais les candidats pour le moteur de confluence se dégagent.
 - ⏳ **Étape 3** : moteur de confluence v0 (poids égaux, plafonds par catégorie) vs baseline momentum_v1
 - ⏳ **Étape 4** : profils `trend_v2` / `smc_v1` / `breakout_v1` (config déclarative), validation IS/OOS + walk-forward, seuils de score par tiers
 

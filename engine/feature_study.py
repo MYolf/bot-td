@@ -34,7 +34,8 @@ from engine.features import (
     vwap_daily,
 )
 from engine.strategy import Candle
-from engine.structure import market_structure
+from engine.structure import liquidity_sweeps, market_structure
+from engine.zones import displacements, fair_value_gaps, order_blocks
 
 HORIZONS: tuple[int, ...] = (4, 16, 48)  # bougies
 RVOL_BUCKETS: tuple[tuple[str, float | None, float | None], ...] = (
@@ -119,6 +120,49 @@ def run_study(candles: list[Candle]) -> str:
     for kind in ("bos_bullish", "bos_bearish"):
         indices = [e.index for e in structure.events if e.kind == kind]
         lines.extend(_group_stats(kind, indices, returns_by_h))
+
+    disp = displacements(candles)
+    lines.append("\nDISPLACEMENT (evenements)")
+    for direction in ("bullish", "bearish"):
+        lines.extend(
+            _group_stats(direction, [e.index for e in disp if e.direction == direction], returns_by_h)
+        )
+
+    sweeps = liquidity_sweeps(candles)
+    lines.append("\nLIQUIDITY SWEEPS (evenements)")
+    for direction in ("bullish", "bearish"):
+        lines.extend(
+            _group_stats(direction, [e.index for e in sweeps if e.direction == direction], returns_by_h)
+        )
+
+    gaps = fair_value_gaps(candles)
+    lines.append("\nFVG (premier retest, +/- displacement a la creation)")
+    for direction in ("bullish", "bearish"):
+        for with_disp in (True, False):
+            label = f"{direction} {'avec' if with_disp else 'sans'} disp."
+            indices = [
+                g.first_retest_index
+                for g in gaps
+                if g.direction == direction
+                and g.with_displacement == with_disp
+                and g.first_retest_index is not None
+            ]
+            lines.extend(_group_stats(label, indices, returns_by_h))
+
+    blocks = order_blocks(candles)
+    lines.append("\nORDER BLOCKS (premier retest apres BOS)")
+    for direction in ("bullish", "bearish"):
+        lines.extend(
+            _group_stats(
+                direction,
+                [
+                    b.first_retest_index
+                    for b in blocks
+                    if b.direction == direction and b.first_retest_index is not None
+                ],
+                returns_by_h,
+            )
+        )
 
     lines.extend(
         _grouped_by(

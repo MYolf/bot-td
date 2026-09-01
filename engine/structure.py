@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from engine.indicators import atr as atr_series
 from engine.strategy import Candle
 
 DEFAULT_SWING_K = 3
@@ -134,3 +135,119 @@ def market_structure(candles: list[Candle], k: int = DEFAULT_SWING_K) -> Structu
         bias[i] = last_direction
 
     return StructureResult(events=events, bias=bias)
+
+
+# ----------------------------------------------------- liquidity sweeps ----
+
+
+@dataclass(frozen=True)
+class SweepEvent:
+    """Balayage de liquidité confirmé (événement DÉCLENCHEUR)."""
+
+    index: int  # bougie de confirmation (clôture de récupération)
+    direction: str  # "bullish" (lows balayés) / "bearish" (highs balayés)
+    swept_level: float  # niveau du swing balayé
+    swing_index: int  # bougie du swing balayé
+    pierce_index: int  # bougie qui a percé le niveau
+
+
+def liquidity_sweeps(
+    candles: list[Candle],
+    k: int = 5,
+    atr_len: int = 14,
+    depth_atr: float = 0.1,
+    min_age: int = 10,
+    confirm_bars: int = 3,
+) -> list[SweepEvent]:
+    """Détecte les liquidity sweeps, définition totalement objective.
+
+    Un swing low ``S`` (fractale ``k``, confirmé) est « balayé » lorsque :
+
+    1. une bougie perce ``S`` par le bas d'au moins ``depth_atr`` x ATR
+       (la liquidité sous le niveau est prise) ;
+    2. une clôture revient AU-DESSUS de ``S`` dans les ``confirm_bars``
+       bougies qui suivent la percée (index de l'événement = cette clôture) ;
+    3. le swing est mort si une clôture passe franchement sous le niveau
+       (moins ``depth_atr`` x ATR : vraie cassure, pas un balayage), ou si
+       l'âge du swing à la percée est < ``min_age`` (liquidité trop fraîche).
+
+    Miroir exact pour les swing highs (direction bearish). Chaque swing ne
+    peut être balayé qu'une fois. Propriété de préfixe : testée en unitaire.
+    """
+    n = len(candles)
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    closes = [c.close for c in candles]
+    atrs = atr_series(highs, lows, closes, atr_len)
+
+    by_confirmation: dict[int, list[SwingPoint]] = defaultdict(list)
+    for swing in find_swings(candles, k):
+        by_confirmation[swing.confirmed_at].append(swing)
+
+    events: list[SweepEvent] = []
+    available: list[SwingPoint] = []  # swings confirmés, non cassés, non balayés
+    # pendings : index du swing -> bougie de percée
+    pendings: dict[int, int] = {}
+
+    for i in range(n):
+        available.extend(by_confirmation.get(i, ()))
+        a = atrs[i]
+
+        survivors: list[SwingPoint] = []
+        for swing in available:
+            level = swing.price
+            if swing.index in pendings:
+                # Fenêtre de récupération ouverte après la percée.
+                if closes[i] > level:
+                    events.append(
+                        SweepEvent(
+                            index=i,
+                            direction="bullish" if swing.kind == "low" else "bearish",
+                            swept_level=level,
+                            swing_index=swing.index,
+                            pierce_index=pendings.pop(swing.index),
+                        )
+                    )
+                    continue  # swing consommé
+                if a is not None and (
+                    (swing.kind == "low" and closes[i] < level - depth_atr * a)
+                    or (swing.kind == "high" and closes[i] > level + depth_atr * a)
+                ):
+                    pendings.pop(swing.index)  # vraie cassure en profondeur
+                    continue
+                if i - pendings[swing.index] >= confirm_bars:
+                    pendings.pop(swing.index)  # fenêtre expirée sans récupération
+                    continue
+                survivors.append(swing)
+                continue
+
+            pierced = a is not None and (
+                (swing.kind == "low" and lows[i] <= level - depth_atr * a)
+                or (swing.kind == "high" and highs[i] >= level + depth_atr * a)
+            )
+            broken = (
+                (swing.kind == "low" and closes[i] < level)
+                or (swing.kind == "high" and closes[i] > level)
+            )
+            if pierced and i - swing.index >= min_age:
+                if not broken:
+                    events.append(
+                        SweepEvent(
+                            index=i,
+                            direction="bullish" if swing.kind == "low" else "bearish",
+                            swept_level=level,
+                            swing_index=swing.index,
+                            pierce_index=i,
+                        )
+                    )
+                    continue  # balayage confirmé sur la même bougie
+                pendings[swing.index] = i  # clôturé sous le niveau : fenêtre ouverte
+                survivors.append(swing)
+                continue
+            if broken or pierced:
+                continue  # cassé, ou percé trop tôt (âge insuffisant) : mort
+            survivors.append(swing)
+
+        available = survivors
+
+    return events
