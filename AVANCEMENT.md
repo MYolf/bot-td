@@ -187,6 +187,24 @@ Objectif : plusieurs stratégies + confluence multi-dimensionnelle. Spécificati
     - *Walk-forward 60 j/30 j (1H)* : BTC −0.16 R, ETH −0.29 R — négatif partout
   - **Décision** : `momentum_v1` reste l'unique stratégie en production, inchangée. Le socle technique (features anti-lookahead, simulateur, protocole de validation) est conservé pour de futures études — avec davantage d'historique (plusieurs régimes), un passage maker (frais ÷5) ou d'autres familles de déclencheurs. Règle respectée : ne jamais déployer sur la seule foi d'un backtest IS.
 
+### Phase 32 — Fibonacci (2026-09-02, TERMINÉE — feature REJETÉE)
+
+Objectif : tester l'incrément informationnel du retracement Fibonacci (bande 0.50-0.70) sur les retests d'Order Blocks. Spécification **scellée avant toute mesure** : `FIBONACCI.md` (règle non négociable : le Fib est une mesure, jamais un déclencheur ; production inchangée pendant toute la phase).
+
+- ✅ **Étape 0** : `FIBONACCI.md` (conventions, impulsion qualifiée, cycle de vie, grades OB×bande, hypothèse unique, protocole, critère §7 figé)
+- ✅ **Étape 1** : `engine/fibonacci.py` — `fib_states()` (snapshot Fib par bougie : unicité, retests par épisode, invalidation 1.0, expiration 200 bougies) + `ob_fib_grade()` (inclusion/overlap/proximity/none) ; propriété de préfixe testée — 244/244
+- ✅ **Étape 2** : `engine/fib_study.py` — étude d'événements (jointure signaux `confluence_v0` × états Fib par index : groupes OB+Fib vs OB seul, forward returns ajustés du sens h=4/16/48, R brut/net de frais, buckets de profondeur, contrôles de spécificité sweep/bos/fvg_retest, critère §7 en fin de sortie) ; CLI `--stage is|oos` ; 267/267 tests
+- **Verdict IS (4 runs du périmètre scellé, fenêtre utile 90 j)** :
+
+  | Symbole×TF | OB+Fib (n) | OB seul (n) | delta mean h=16 | delta R net h=16 | n ≥ 30 |
+  |---|---|---|---|---|---|
+  | BTC 15m | 8 | 63 | +0.043 % | +0.843 R | NON |
+  | ETH 15m | 7 | 60 | +0.847 % | +2.071 R | NON |
+  | BTC 1H | 1 | 10 | −0.820 % | −1.395 R | NON |
+  | ETH 1H | 4 | 10 | −0.806 % | +0.364 R | NON |
+
+- **Décision : feature rejetée, OOS volontairement non consommé.** Le critère §7-1 (n ≥ 30 dans chaque groupe) échoue en IS sur les 4 couples avec un défaut massif (≤ 8 événements OB+Fib en 90 j) : la coïncidence OB retesté × Fib actif × même direction × grade inclusion/overlap est trop rare pour être mesurée sur ce périmètre. La validation exigeant le critère en IS **et** en OOS, l'OOS ne pouvait rien rattraper — le lancer n'aurait rien apporté. Les deltas 15m vont dans le sens de l'hypothèse (ETH +2.07 R net) mais sur 7-8 événements = bruit ; les deltas 1H sont majoritairement négatifs ; les contrôles de spécificité ne montrent pas d'effet bande cohérent. Production (`momentum_v1`) inchangée, code d'étude archivé dans `engine/fib_study.py` si l'hypothèse est re-testée un jour avec davantage d'historique.
+
 Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
