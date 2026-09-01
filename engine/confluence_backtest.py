@@ -4,8 +4,9 @@ Règles de simulation (identiques pour les deux stratégies) :
 - entrée à la CLÔTURE de la bougie de signal (aucune anticipation) ;
 - une seule position à la fois ; un signal du même sens est ignoré, un
   signal opposé renverse la position (clôture à l'entrée du nouveau) ;
-- sortie si une bougie touche le SL ou le TP (SL prioritaire si les deux —
-  hypothèse prudente, cohérente avec engine/position.py) ;
+- sortie selon la politique ``ExitPolicy`` : bracket (SL/TP, SL prioritaire
+  si les deux — hypothèse prudente, cohérente avec engine/position.py) ou
+  temporelle (SL de sécurité seul + clôture h bougies plus tard) ;
 - frais par aller-retour déduits en R (défaut 0.12 % : 2 x 0.05 % taker +
   slippage) ;
 - position encore ouverte à la fin : clôturée à la dernière clôture.
@@ -51,6 +52,28 @@ class SignalEntry:
 
 
 @dataclass(frozen=True)
+class ExitPolicy:
+    """Politique de sortie du simulateur.
+
+    - ``bracket`` (défaut) : SL ou TP dès qu'une bougie les touche (SL
+      prioritaire) — logique de l'étape 3, détruit le drift mesuré en
+      feature study si le bracket est trop serré.
+    - ``time`` : SL de sécurité uniquement (le SL structurel du signal),
+      sortie à la CLÔTURE de la bougie ``max_bars`` après l'entrée —
+      capte la dérive conditionnelle mesurée (h=16) sans l'amputer.
+    """
+
+    kind: str = "bracket"
+    max_bars: int = 16
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("bracket", "time"):
+            raise ValueError(f"politique de sortie inconnue : {self.kind}")
+        if self.kind == "time" and self.max_bars < 1:
+            raise ValueError("max_bars doit être >= 1")
+
+
+@dataclass(frozen=True)
 class Trade:
     open_index: int
     exit_index: int
@@ -62,9 +85,13 @@ class Trade:
 
 
 def simulate_trades(
-    candles: list[Candle], entries: list[SignalEntry], fee_rate: float = 0.0012
+    candles: list[Candle],
+    entries: list[SignalEntry],
+    fee_rate: float = 0.0012,
+    policy: ExitPolicy | None = None,
 ) -> list[Trade]:
     """Simule les entrées dans l'ordre (une position, renversement autorisé)."""
+    policy = policy or ExitPolicy()
     queue = sorted(entries, key=lambda e: e.index)
     trades: list[Trade] = []
     open_position: SignalEntry | None = None
@@ -95,13 +122,15 @@ def simulate_trades(
             if open_position.action == "BUY":
                 if candle.low <= open_position.stop_loss:
                     exit_price = open_position.stop_loss
-                elif candle.high >= open_position.take_profit:
+                elif policy.kind == "bracket" and candle.high >= open_position.take_profit:
                     exit_price = open_position.take_profit
             else:
                 if candle.high >= open_position.stop_loss:
                     exit_price = open_position.stop_loss
-                elif candle.low <= open_position.take_profit:
+                elif policy.kind == "bracket" and candle.low <= open_position.take_profit:
                     exit_price = open_position.take_profit
+            if exit_price is None and policy.kind == "time" and i >= open_position.index + policy.max_bars:
+                exit_price = candle.close  # sortie temporelle à la clôture
             if exit_price is not None:
                 _finalize(open_position, i, exit_price)
                 open_position = None

@@ -29,3 +29,6 @@ Thumbs.db
 
 # Claude Code : settings locaux uniquement (les skills .claude/skills/ sont versionnés)
 .claude/settings.local.json
+
+# Cache de donnees de validation (engine/validation.py)
+data/

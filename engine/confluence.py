@@ -11,6 +11,13 @@ Architecture à trois niveaux (CONFLUENCE.md) :
 - Niveau 3, SCORE /100 : 5 catégories de 20 points (poids égaux v0, ajustés
   uniquement après validation out-of-sample) :
   tendance 15m, tendance 1H, structure & liquidité, momentum, volume.
+  Score v1 (étape 4) : la catégorie tendance pénalise la sur-extension
+  (prix très au-delà de l'EMA rapide dans le sens du signal) — le régime
+  mesuré est mean-reverting, la poursuite de tendance y est perdante.
+
+Profils déclaratifs (``STRATEGY_PROFILES``) : mêmes gâchettes et features,
+les paramètres ``triggers`` / ``require_trend_aligned`` /
+``require_structure`` définissent trend_v2, smc_v1, breakout_v1.
 
 Le score QUALIFIE un signal (choix des tiers, étude) ; il ne le crée pas.
 
@@ -29,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.features import momentum_states, trend_states, volume_states
-from engine.indicators import atr as atr_series
+from engine.indicators import atr as atr_series, ema
 from engine.strategy import Candle
 from engine.structure import liquidity_sweeps, market_structure
 from engine.zones import fair_value_gaps, order_blocks
@@ -40,6 +47,7 @@ NEUTRAL = "neutral"
 
 # Priorité d'étiquetage quand plusieurs déclencheurs tombent sur la même bougie.
 TRIGGER_PRIORITY = ("sweep", "bos", "ob_retest", "fvg_retest")
+ALL_TRIGGERS = TRIGGER_PRIORITY
 
 
 @dataclass(frozen=True)
@@ -61,6 +69,13 @@ class ConfluenceParams:
     htf_ema_fast: int = 50
     htf_ema_slow: int = 200
     rvol_len: int = 20
+    # --- Profils déclaratifs (CONFLUENCE.md, mêmes features, gâchettes différentes)
+    triggers: tuple[str, ...] = ALL_TRIGGERS  # déclencheurs autorisés
+    require_trend_aligned: bool = False  # tendance 15m ALIGNÉE (pas juste non opposée)
+    require_structure: int = 0  # éléments structurels alignés minimum
+    # --- Score v1 anti-extension (étape 4) : pénaliser la poursuite de tendance
+    extension_max_atr: float = 2.0  # distance clôture/EMA rapide, en ATR
+    extension_penalty: int = 12  # points retirés de la catégorie tendance
 
 
 @dataclass(frozen=True)
@@ -78,6 +93,28 @@ class ConfluenceSignal:
     details: tuple[str, ...]  # une ligne par catégorie (explicabilité)
     candle_open_time: int
     candle_close_time: int
+
+
+# Profils déclaratifs (CONFLUENCE.md §Stratégies) : même moteur, même score,
+# seules les gâchettes et les déclencheurs autorisés changent. Définis A PRIORI
+# (aucun réglage sur les données avant validation IS/OOS).
+STRATEGY_PROFILES: dict[str, ConfluenceParams] = {
+    # Référence complète : tous déclencheurs, gâchettes non opposées.
+    "confluence_v0": ConfluenceParams(),
+    # Continuation en tendance : BOS dans le sens de la tendance 15m alignée,
+    # appuyé par au moins un élément structurel dans la fenêtre.
+    "trend_v2": ConfluenceParams(
+        triggers=("bos", "ob_retest"), require_trend_aligned=True, require_structure=1
+    ),
+    # Smart money : liquidité balayée puis reprise (sweeps + retests de zones),
+    # contre-tendance locale tolérée si le HTF n'est pas opposé.
+    "smc_v1": ConfluenceParams(triggers=("sweep", "fvg_retest")),
+    # Compression -> expansion : BOS porté par une structure dense (2 éléments
+    # minimum) et une tendance 15m déjà alignée.
+    "breakout_v1": ConfluenceParams(
+        triggers=("bos",), require_trend_aligned=True, require_structure=2
+    ),
+}
 
 
 def resample(candles: list[Candle], bucket_ms: int) -> list[Candle]:
@@ -166,6 +203,7 @@ def confluence_signals(
     atrs = atr_series(
         [c.high for c in candles], [c.low for c in candles], closes, params.atr_len
     )
+    ema_fast_values = ema(closes, params.ema_fast)
     trend = trend_states(candles, params.ema_fast, params.ema_slow)
     momentum = momentum_states(candles)
     volume = volume_states(candles, params.rvol_len)
@@ -212,7 +250,9 @@ def confluence_signals(
 
     signals: list[ConfluenceSignal] = []
     for t in sorted(triggers_at):
-        entries = triggers_at[t]
+        entries = [e for e in triggers_at[t] if e[0] in params.triggers]
+        if not entries:
+            continue  # aucun déclencheur autorisé par le profil sur cette bougie
         directions = {d for _, d, _ in entries}
         if len(directions) != 1:
             continue  # déclencheurs contradictoires sur la même bougie : abstention
@@ -224,6 +264,8 @@ def confluence_signals(
             continue  # gâchette tendance 15m non opposée
         if _opposite(htf_bias[t], direction):
             continue  # gâchette tendance 1H non opposée
+        if params.require_trend_aligned and trend[t].bias != direction:
+            continue  # gâchette de profil : tendance 15m ALIGNÉE exigée
 
         candle = candles[t]
         entry = candle.close
@@ -251,13 +293,28 @@ def confluence_signals(
         if rr < params.min_rr:
             continue  # gâchette RR minimal
 
-        # --- Score v0 : 5 catégories de 20, poids égaux (CONFLUENCE.md) ---
-        aligned_trend = trend[t].bias == direction
-        score_trend15 = 20 if aligned_trend else 10  # opposé = gated
-        score_trend1h = 20 if htf_bias[t] == direction else 10  # neutre/amorce
-
+        # --- Score v1 : 5 catégories de 20, poids égaux (CONFLUENCE.md) ---
         elements = _aligned_elements(t, direction)
+        if elements < params.require_structure:
+            continue  # gâchette de profil : structure minimale exigée
         score_structure = 20 if elements >= 2 else 10
+
+        aligned_trend = trend[t].bias == direction
+        # Anti-extension (étape 4) : le drift mesuré est un retour vers la
+        # moyenne ; entrer dans le sens de la tendance QUAND le prix est déjà
+        # très au-delà de l'EMA rapide, c'est poursuivre — pénalisé.
+        fast = ema_fast_values[t]
+        extension_atr: float | None = None
+        if fast is not None and a > 0.0:
+            extension_atr = (closes[t] - fast) / a
+        over_extended = (
+            extension_atr is not None
+            and (extension_atr if bullish else -extension_atr) > params.extension_max_atr
+        )
+        score_trend15 = 20 if aligned_trend else 10  # opposé = gated
+        if aligned_trend and over_extended:
+            score_trend15 -= params.extension_penalty
+        score_trend1h = 20 if htf_bias[t] == direction else 10  # neutre/amorce
 
         if momentum[t].bias == direction:
             score_momentum = 14
@@ -281,7 +338,9 @@ def confluence_signals(
         trigger = next(kind for kind in TRIGGER_PRIORITY if any(k == kind for k, _, _ in entries))
         details = (
             f"Declencheur: {trigger} ({direction})",
-            f"Tendance 15m: {trend[t].bias} +{score_trend15}",
+            f"Tendance 15m: {trend[t].bias}"
+            f"{' (sur-extension ' + str(round(extension_atr, 1)) + ' ATR)' if over_extended else ''}"
+            f" +{score_trend15}",
             f"Tendance 1H: {htf_bias[t]} +{score_trend1h}",
             f"Structure: {elements} element(s) aligne(s) +{score_structure}",
             f"Momentum: {momentum[t].bias} +{score_momentum}",

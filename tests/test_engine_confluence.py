@@ -11,7 +11,13 @@ import random
 
 import pytest
 
-from engine.confluence import ConfluenceParams, confluence_signals, resample
+from engine.confluence import (
+    STRATEGY_PROFILES,
+    ConfluenceParams,
+    confluence_signals,
+    resample,
+)
+from engine.confluence_backtest import ExitPolicy, SignalEntry, compute_metrics, simulate_trades
 from engine.confluence_backtest import SignalEntry, compute_metrics, simulate_trades
 from engine.strategy import Candle
 
@@ -171,6 +177,33 @@ def test_simulate_meme_sens_ignore_renversement_accepte() -> None:
     assert trades[1].raw_r == (101.0 - 101.0) / 2.0
 
 
+def test_simulate_sortie_temporelle() -> None:
+    # Politique temporelle : SL de sécurité actif, TP ignoré, sortie à la
+    # clôture de la bougie entry+max_bars.
+    candles = [
+        _candle(0, 99.0, 100.5, 98.5, 100.0),  # entrée 100
+        _candle(1, 100.0, 104.0, 99.5, 103.5),  # TP 104 non pris en compte
+        _candle(2, 103.5, 105.0, 103.0, 104.5),  # sortie à la clôture (0+2)
+    ]
+    entries = [SignalEntry(index=0, action="BUY", entry=100.0, stop_loss=98.0, take_profit=104.0)]
+    trades = simulate_trades(candles, entries, fee_rate=0.0, policy=ExitPolicy("time", 2))
+    assert len(trades) == 1
+    assert trades[0].exit_index == 2
+    assert trades[0].raw_r == (104.5 - 100.0) / 2.0  # dérive capturée, pas le TP
+
+
+def test_simulate_sortie_temporelle_sl_securite_prioritaire() -> None:
+    candles = [
+        _candle(0, 99.0, 100.5, 98.5, 100.0),
+        _candle(1, 100.0, 101.0, 97.5, 98.0),  # low <= SL : sécurité immédiate
+    ]
+    entries = [SignalEntry(index=0, action="BUY", entry=100.0, stop_loss=98.0, take_profit=110.0)]
+    trades = simulate_trades(candles, entries, fee_rate=0.0, policy=ExitPolicy("time", 8))
+    assert len(trades) == 1
+    assert trades[0].exit_index == 1
+    assert trades[0].raw_r == -1.0
+
+
 def test_metrics_cohrentes() -> None:
     from engine.confluence_backtest import Trade
 
@@ -188,3 +221,81 @@ def test_metrics_cohrentes() -> None:
     assert m["total_r"] == 1.6  # 1.9 - 1.1 - 1.1 + 1.9
     assert m["max_losing_streak"] == 2
     assert m["max_drawdown"] == 2.2  # crête 1.9, creux 1.9-1.1-1.1 = -0.3
+
+
+# --------------------------------------------- score v1 : anti-extension --
+
+
+def _extended_sweep_series() -> list[Candle]:
+    """Série plate, balayage en 39 CLÔTANT à 130 : tendance 15m alignée
+    (EMA3 > EMA5) MAIS prix très au-delà de l'EMA rapide (sur-extension)."""
+    candles = []
+    for i in range(40):
+        if i == 2:
+            candles.append(_candle(i, 100.0, 100.5, 97.0, 100.0))
+        elif i == 39:
+            candles.append(_candle(39, 100.0, 131.0, 94.0, 130.0))
+        else:
+            candles.append(_candle(i, 100.0, 100.5, 99.0, 100.0))
+    return candles
+
+
+def _ext_params(extension_max_atr: float) -> ConfluenceParams:
+    return ConfluenceParams(
+        sweep_k=2, sweep_min_age=5, atr_len=2, ema_fast=3, ema_slow=5,
+        extension_max_atr=extension_max_atr,
+    )
+
+
+def test_score_penalise_la_sur_extension() -> None:
+    candles = _extended_sweep_series()
+    normal = confluence_signals(candles, None, _ext_params(100.0))
+    penalise = confluence_signals(candles, None, _ext_params(0.5))
+    assert len(normal) == 1 and len(penalise) == 1
+    # Même signal, catégorie tendance amputée de la pénalité (défaut 12).
+    assert penalise[0].score == normal[0].score - 12
+    # Le détail garde 6 lignes et mentionne la sur-extension.
+    assert len(penalise[0].details) == 6
+    assert any("sur-extension" in line for line in penalise[0].details)
+    assert not any("sur-extension" in line for line in normal[0].details)
+
+
+def test_score_sans_extension_pas_de_penalite() -> None:
+    # Balayage classique (clôture 100, prix sur l'EMA) : aucun changement.
+    candles = _sweep_series()
+    base = confluence_signals(candles, None, _small_params())
+    severe = confluence_signals(
+        candles, None, ConfluenceParams(**{**_small_params().__dict__, "extension_max_atr": 0.0})
+    )
+    assert len(base) == len(severe) == 1
+    # Tendance neutre (EMA50/200 non définies) : jamais de pénalité.
+    assert severe[0].score == base[0].score
+
+
+# ------------------------------------------------------------ profils ----
+
+
+def test_profils_gachettes_declencheurs_et_structure() -> None:
+    candles = _sweep_series()
+    # Déclencheur filtré : seuls les sweeps sont autorisés -> signal conservé.
+    sweep_seul = ConfluenceParams(**{**_small_params().__dict__, "triggers": ("sweep",)})
+    assert len(confluence_signals(candles, None, sweep_seul)) == 1
+    # Aucun déclencheur autorisé correspondant -> aucun signal.
+    bos_seul = ConfluenceParams(**{**_small_params().__dict__, "triggers": ("bos",)})
+    assert confluence_signals(candles, None, bos_seul) == []
+    # Tendance ALIGNÉE exigée : tendance neutre ici -> signal bloqué.
+    aligne = ConfluenceParams(**{**_small_params().__dict__, "require_trend_aligned": True})
+    assert confluence_signals(candles, None, aligne) == []
+    # Structure minimale 3 : un seul élément aligné -> bloqué.
+    structure = ConfluenceParams(**{**_small_params().__dict__, "require_structure": 3})
+    assert confluence_signals(candles, None, structure) == []
+
+
+def test_profils_declaratifs_coherents() -> None:
+    from engine.confluence import ALL_TRIGGERS
+
+    assert set(STRATEGY_PROFILES) == {"confluence_v0", "trend_v2", "smc_v1", "breakout_v1"}
+    for profile in STRATEGY_PROFILES.values():
+        assert profile.triggers  # jamais vide
+        assert set(profile.triggers) <= set(ALL_TRIGGERS)
+        assert 0 <= profile.extension_penalty < 20
