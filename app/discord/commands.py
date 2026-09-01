@@ -20,7 +20,7 @@ from app.discord.embeds import (
     build_stats_embed,
     build_strategies_embed,
 )
-from app.paper_trading.statistics import compute_stats
+from app.paper_trading.statistics import compute_stats, equity_sparkline, paper_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +118,11 @@ async def stats_command(
         par_action = await repository.count_by_action(timeframe=timeframe, strategy=strategie)
         par_strategie = await repository.count_by_strategy(timeframe=timeframe)
         paper_repository = PaperRepository(session)
-        paper = compute_stats(
-            await paper_repository.closed_results(timeframe=timeframe, strategy=strategie)
+        rows = await paper_repository.closed_rows(
+            timeframe=timeframe, strategy=strategie
         )
+        paper = compute_stats([result_r for result_r, _, _ in rows])
+        par_symbole, par_direction = paper_breakdown(rows)
         ouvertes = await paper_repository.count_open()
     embed = build_stats_embed(
         total=total,
@@ -130,6 +132,9 @@ async def stats_command(
         paper=paper,
         ouvertes=ouvertes,
         filtre=filtre,
+        par_symbole=par_symbole,
+        par_direction=par_direction,
+        sparkline=equity_sparkline([result_r for result_r, _, _ in rows]),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
     logger.info(

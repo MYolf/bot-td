@@ -297,15 +297,16 @@ class PaperRepository:
             )
         )
 
-    async def closed_results(
+    async def closed_rows(
         self,
         *,
         timeframe: str | None = None,
         strategy: str | None = None,
-    ) -> list[Decimal]:
-        """Résultats (en R) des positions clôturées, filtrable (Phase 23)."""
+    ) -> list[tuple[Decimal, str, str]]:
+        """Trades clôturés (result_r, symbol, action), filtrables par
+        timeframe/stratégie — sert aux statistiques et ventilations /stats."""
         stmt = (
-            select(PaperPosition.result_r)
+            select(PaperPosition.result_r, Signal.symbol, Signal.action)
             .join(Signal, PaperPosition.signal_id == Signal.id)
             .where(PaperPosition.status == "CLOSED", PaperPosition.result_r.is_not(None))
         )
@@ -316,7 +317,7 @@ class PaperRepository:
         if timeframe is not None:
             stmt = stmt.where(Signal.timeframe == timeframe)
         stmt = stmt.order_by(PaperPosition.closed_at)
-        return list((await self._session.scalars(stmt)).all())
+        return [tuple(row) for row in (await self._session.execute(stmt)).all()]
 
     async def count_open(self) -> int:
         """Nombre de positions actuellement ouvertes."""

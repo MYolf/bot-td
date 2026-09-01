@@ -7,11 +7,13 @@ from app.discord.embeds import (
     GREEN,
     RED,
     build_signal_embed,
+    build_stats_embed,
     format_price,
     format_risk_reward,
     strategy_label,
     timeframe_label,
 )
+from app.paper_trading.statistics import compute_stats
 
 
 def _embed(action: str = "BUY"):
@@ -88,3 +90,49 @@ class TestEmbed:
         )
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Signal Time"] == "20:14:03 UTC"
+
+
+class TestStatsEmbed:
+    def _embed(self, **overrides):
+        base = dict(
+            total=3,
+            par_statut={"SENT": 3},
+            par_action={"BUY": 2, "SELL": 1},
+            par_strategie={"momentum_v1": 3},
+            paper=compute_stats([Decimal("2"), Decimal("2"), Decimal("-1")]),
+            ouvertes=1,
+        )
+        base.update(overrides)
+        return build_stats_embed(**base)
+
+    def test_aucune_cloture_sans_ventilations(self):
+        embed = self._embed(paper=compute_stats([]), ouvertes=2)
+        champs = {f.name: f.value for f in embed.fields}
+        assert "Aucune position clôturée (2 ouverte(s))" in champs["Paper trading (R)"]
+        assert "Par symbole (R)" not in champs
+        assert "Par direction (R)" not in champs
+
+    def test_champs_enrichis(self):
+        embed = self._embed()
+        champs = {f.name: f.value for f in embed.fields}
+        papier = champs["Paper trading (R)"]
+        assert "Médiane : 2.00 R" in papier
+        assert "Profit factor : 4.00" in papier
+        assert "Meilleur : 2.00 R · Pire : -1.00 R" in papier
+
+    def test_ventilations_et_equite(self):
+        embed = self._embed(
+            par_symbole={"BTCUSDT": compute_stats([Decimal("2")])},
+            par_direction={"BUY": compute_stats([Decimal("2")])},
+            sparkline="▁▄█",
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert "BTCUSDT : 1 trades · 100.00% · 2.00 R" in champs["Par symbole (R)"]
+        assert "🟢 BUY : 1 trades · 100.00% · 2.00 R" in champs["Par direction (R)"]
+        assert "Équité : ▁▄█" in champs["Paper trading (R)"]
+
+    def test_profit_factor_none_affiche_tiret(self):
+        # Aucune perte -> PF indéfini, affiché "—" (pas de crash).
+        embed = self._embed(paper=compute_stats([Decimal("2")]))
+        champs = {f.name: f.value for f in embed.fields}
+        assert "Profit factor : —" in champs["Paper trading (R)"]

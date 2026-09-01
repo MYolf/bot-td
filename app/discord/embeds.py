@@ -142,6 +142,11 @@ def build_signals_list_embed(rows: list) -> discord.Embed:
     return embed
 
 
+def _paper_line(label: str, stats: PerformanceStats) -> str:
+    """Ligne compacte d'une ventilation paper : n · win% · total R."""
+    return f"{label} : {stats.total} trades · {stats.win_rate}% · {stats.total_r} R"
+
+
 def build_stats_embed(
     *,
     total: int,
@@ -151,13 +156,18 @@ def build_stats_embed(
     paper: "PerformanceStats",
     ouvertes: int = 0,
     filtre: str | None = None,
+    par_symbole: dict[str, PerformanceStats] | None = None,
+    par_direction: dict[str, PerformanceStats] | None = None,
+    sparkline: str = "",
 ) -> discord.Embed:
     """Statistiques des signaux stockés + paper trading (commande /stats).
 
     Les performances sont en R-multiples (simulation locale, Phase 21) :
     toujours mentionner le nombre de trades — un échantillon < 30 n'a aucune
     signification statistique. `filtre` (Phases 23-24) affiche les critères
-    de filtrage actifs.
+    de filtrage actifs. `par_symbole` / `par_direction` / `sparkline`
+    (ventilations et courbe d'équité) ne s'affichent que s'il y a des
+    positions clôturées.
     """
     embed = discord.Embed(title="📊 Statistiques des signaux", color=PURPLE)
     if filtre:
@@ -182,15 +192,31 @@ def build_stats_embed(
         inline=False,
     )
     if paper.total > 0:
+        pf = "—" if paper.profit_factor is None else str(paper.profit_factor)
         papier = (
             f"{paper.total} clôturées · {ouvertes} ouvertes\n"
             f"Win rate : {paper.win_rate}% ({paper.wins}W / {paper.losses}L)\n"
-            f"Total : {paper.total_r} R · Moyenne : {paper.avg_r} R\n"
-            f"Max drawdown : {paper.max_drawdown_r} R"
+            f"Total : {paper.total_r} R · Moyenne : {paper.avg_r} R · Médiane : {paper.median_r} R\n"
+            f"Profit factor : {pf} · Max drawdown : {paper.max_drawdown_r} R\n"
+            f"Meilleur : {paper.best_r} R · Pire : {paper.worst_r} R"
         )
+        if sparkline:
+            papier += f"\nÉquité : {sparkline}"
     else:
         papier = f"Aucune position clôturée ({ouvertes} ouverte(s))"
     embed.add_field(name="Paper trading (R)", value=papier, inline=False)
+    if paper.total > 0 and par_symbole:
+        embed.add_field(
+            name="Par symbole (R)",
+            value="\n".join(_paper_line(k, v) for k, v in par_symbole.items()),
+            inline=True,
+        )
+    if paper.total > 0 and par_direction:
+        lignes = [
+            _paper_line("🟢 BUY" if k == "BUY" else "🔴 SELL", v)
+            for k, v in sorted(par_direction.items())
+        ]
+        embed.add_field(name="Par direction (R)", value="\n".join(lignes), inline=True)
     embed.set_footer(text="Simulation locale en R — moins de 30 trades = non significatif")
     return embed
 

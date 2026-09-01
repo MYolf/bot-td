@@ -13,8 +13,9 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.database.models import PaperPosition, PaperTrade
+from app.database.repository import PaperRepository
 from app.paper_trading.engine import resolve_exit, result_in_r
-from app.paper_trading.statistics import compute_stats
+from app.paper_trading.statistics import compute_stats, equity_sparkline, paper_breakdown
 
 
 def _payload(
@@ -70,6 +71,14 @@ def _fermees(client) -> list[PaperPosition]:
 
 def _ouvertes(client) -> list[PaperPosition]:
     return [p for p in _positions(client) if p.status == "OPEN"]
+
+
+def _closed_rows(client, **filters) -> list[tuple]:
+    async def load():
+        async with client.db_factory() as session:
+            return await PaperRepository(session).closed_rows(**filters)
+
+    return asyncio.run(load())
 
 
 # --- Logique pure ---
@@ -130,6 +139,54 @@ class TestComputeStats:
         stats = compute_stats([Decimal("1"), Decimal("-1"), Decimal("-1"), Decimal("1")])
         assert stats.max_drawdown_r == Decimal("2")
         assert stats.total_r == 0
+
+    def test_mediane_impair(self):
+        # Tri : -1, 2, 3 -> valeur centrale 2.
+        stats = compute_stats([Decimal("2"), Decimal("-1"), Decimal("3")])
+        assert stats.median_r == Decimal("2")
+
+    def test_mediane_pair(self):
+        # Tri : -1, -1, 2, 2 -> moyenne des deux centraux = 0.5.
+        stats = compute_stats([Decimal("2"), Decimal("2"), Decimal("-1"), Decimal("-1")])
+        assert stats.median_r == Decimal("0.5")
+
+
+class TestPaperBreakdown:
+    def test_ventilation_symbole_et_direction(self):
+        rows = [
+            (Decimal("2"), "BTCUSDT", "BUY"),
+            (Decimal("-1"), "ETHUSDT", "SELL"),
+            (Decimal("2"), "ETHUSDT", "BUY"),
+        ]
+        par_symbole, par_direction = paper_breakdown(rows)
+        assert list(par_symbole) == ["BTCUSDT", "ETHUSDT"]  # triées
+        assert par_symbole["BTCUSDT"].total == 1
+        assert par_symbole["BTCUSDT"].total_r == Decimal("2")
+        assert par_symbole["ETHUSDT"].total == 2
+        assert par_symbole["ETHUSDT"].total_r == Decimal("1")
+        assert par_direction["BUY"].total == 2
+        assert par_direction["BUY"].total_r == Decimal("4")
+        assert par_direction["SELL"].total == 1
+        assert par_direction["SELL"].total_r == Decimal("-1")
+
+    def test_vide(self):
+        par_symbole, par_direction = paper_breakdown([])
+        assert par_symbole == {}
+        assert par_direction == {}
+
+
+class TestEquitySparkline:
+    def test_moins_de_deux_trades_vide(self):
+        assert equity_sparkline([]) == ""
+        assert equity_sparkline([Decimal("2")]) == ""
+
+    def test_croissante(self):
+        # Cumul 1, 2, 3 -> min au début, max à la fin.
+        assert equity_sparkline([Decimal("1")] * 3, width=3) == "▁▄█"
+
+    def test_decroissante(self):
+        # Cumul 1, 0, -1 -> peak au début, creux à la fin.
+        assert equity_sparkline([Decimal("1"), Decimal("-1"), Decimal("-1")], width=3) == "█▄▁"
 
 
 # --- Intégration webhook -> moteur -> base ---
@@ -215,6 +272,44 @@ class TestPaperTradingViaWebhook:
         )
         assert _fermees(client) == []
         assert len(_ouvertes(client)) == 2
+
+
+class TestClosedRows:
+    def test_rows_et_filtres(self, client):
+        # BTC : BUY clôturé TP (+2R) ; ETH : SELL clôturé SL (-1R).
+        client.post("/webhook/tradingview", json=_payload(symbol="BTCUSDT"))
+        client.post(
+            "/webhook/tradingview",
+            json=_payload(
+                symbol="BTCUSDT", price="105", stop_loss="103", take_profit="108",
+                timestamp=_later(),
+            ),
+        )
+        client.post(
+            "/webhook/tradingview",
+            json=_payload(action="SELL", symbol="ETHUSDT", stop_loss="102", take_profit="96"),
+        )
+        client.post(
+            "/webhook/tradingview",
+            json=_payload(
+                action="SELL", symbol="ETHUSDT", price="103", stop_loss="105",
+                take_profit="99", timestamp=_later(),
+            ),
+        )
+
+        rows = _closed_rows(client)
+        assert sorted(rows) == [
+            (Decimal("-1"), "ETHUSDT", "SELL"),
+            (Decimal("2"), "BTCUSDT", "BUY"),
+        ]
+        # Ventilation : un groupe par symbole et par direction.
+        par_symbole, par_direction = paper_breakdown(rows)
+        assert set(par_symbole) == {"BTCUSDT", "ETHUSDT"}
+        assert set(par_direction) == {"BUY", "SELL"}
+
+        assert _closed_rows(client, timeframe="60") == []  # tout est en 15m
+        assert len(_closed_rows(client, timeframe="15")) == 2
+        assert len(_closed_rows(client, strategy="momentum_v1")) == 2
 
 
 class TestFiabilite:
