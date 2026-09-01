@@ -10,7 +10,11 @@ from decimal import Decimal
 
 import discord
 
-from app.paper_trading.statistics import PerformanceStats
+from app.paper_trading.statistics import (
+    PerformanceStats,
+    compute_stats,
+    paper_breakdown,
+)
 
 GREEN = 0x2ECC71  # LONG
 RED = 0xE74C3C  # SHORT
@@ -147,6 +151,15 @@ def _paper_line(label: str, stats: PerformanceStats) -> str:
     return f"{label} : {stats.total} trades · {stats.win_rate}% · {stats.total_r} R"
 
 
+def _fmt_r(value: Decimal) -> str:
+    """Décimal R lisible sans exposant (``Decimal('100').normalize()`` donnerait ``1E+2``)."""
+    return format(value.normalize(), "f")
+
+
+def _signe_r(value: Decimal) -> str:
+    return "+" if value > 0 else ""
+
+
 def build_stats_embed(
     *,
     total: int,
@@ -275,6 +288,7 @@ def build_weekly_recap_embed(
     ouvertes_semaine: list,
     cloturees_semaine: list,
     en_cours: list,
+    cloturees_semaine_precedente: list | None = None,
 ) -> discord.Embed:
     """Embed du récap hebdomadaire (vendredi 22h, heure locale configurée).
 
@@ -282,6 +296,8 @@ def build_weekly_recap_embed(
       ouvertes sur les 7 derniers jours ;
     - `cloturees_semaine` : lignes (PaperPosition, PaperTrade, Signal, nom de
       stratégie) clôturées sur les 7 derniers jours ;
+    - `cloturees_semaine_precedente` : mêmes lignes pour les 7 jours
+      précédents (comparaison du bilan) ;
     - `en_cours` : TOUTES les positions ouvertes — elles restent dans chaque
       récap jusqu'à leur TP/SL.
     """
@@ -307,10 +323,8 @@ def build_weekly_recap_embed(
     )
 
     lignes_cloturees = []
-    total_r = Decimal("0")
     for _position, trade, signal, strategy_name in cloturees_semaine:
         gagnant = trade.exit_reason == "TP"
-        total_r += _position.result_r
         signe = "+" if _position.result_r > 0 else ""
         lignes_cloturees.append(
             f"{'✅' if gagnant else '❌'} **{signal.symbol}** "
@@ -338,14 +352,46 @@ def build_weekly_recap_embed(
         inline=False,
     )
 
-    signe = "+" if total_r > 0 else ""
-    embed.add_field(
-        name="Résultat de la semaine",
-        value=f"{signe}{total_r.normalize()} R"
-        if cloturees_semaine
-        else "Aucune clôture cette semaine",
-        inline=False,
-    )
+    # --- Bilan enrichi (stats R, comparaison S-1, ventilation direction) ---
+    stats = compute_stats([p.result_r for p, _t, _s, _st in cloturees_semaine])
+    if stats.total > 0:
+        pf = "—" if stats.profit_factor is None else _fmt_r(stats.profit_factor)
+        bilan = (
+            f"{stats.total} trades · win {stats.win_rate}% · "
+            f"{_signe_r(stats.total_r)}{_fmt_r(stats.total_r)} R\n"
+            f"Moyenne {_signe_r(stats.avg_r)}{_fmt_r(stats.avg_r)} R · "
+            f"Médiane {_signe_r(stats.median_r)}{_fmt_r(stats.median_r)} R · PF {pf}\n"
+            f"Meilleur {_signe_r(stats.best_r)}{_fmt_r(stats.best_r)} R · "
+            f"Pire {_signe_r(stats.worst_r)}{_fmt_r(stats.worst_r)} R"
+        )
+        stats_precedentes = compute_stats(
+            [p.result_r for p, _t, _s, _st in cloturees_semaine_precedente or []]
+        )
+        if stats_precedentes.total > 0:
+            delta = stats.total_r - stats_precedentes.total_r
+            bilan += (
+                f"\nSemaine précédente : "
+                f"{_signe_r(stats_precedentes.total_r)}{_fmt_r(stats_precedentes.total_r)} R "
+                f"({stats_precedentes.total} trades) · "
+                f"Δ {_signe_r(delta)}{_fmt_r(delta)} R"
+            )
+    else:
+        bilan = "Aucune clôture cette semaine"
+    embed.add_field(name="Résultat de la semaine", value=bilan, inline=False)
+
+    if stats.total > 0:
+        _symbole, par_direction = paper_breakdown(
+            [(p.result_r, s.symbol, s.action) for p, _t, s, _st in cloturees_semaine]
+        )
+        lignes_direction = [
+            _paper_line("🟢 BUY" if action == "BUY" else "🔴 SELL", dir_stats)
+            for action, dir_stats in sorted(par_direction.items())
+        ]
+        embed.add_field(
+            name="Par direction (R)",
+            value="\n".join(lignes_direction),
+            inline=False,
+        )
     embed.set_footer(
         text="Paper trading — simulation locale en R, aucun ordre réel · "
         "les positions en cours restent affichées chaque semaine jusqu'à TP/SL"

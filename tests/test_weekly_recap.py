@@ -67,7 +67,8 @@ class TestComputeNextRun:
 # --- Construction des données de test ---
 
 def _seed(client) -> None:
-    """Trois positions : ouverte cette semaine, clôturée cette semaine (TP),
+    """Quatre positions : ouverte cette semaine, clôturée cette semaine (TP),
+    clôturée la semaine PRÉCÉDENTE (SL, pour la comparaison du bilan),
     ouverte avant la semaine écoulée (toujours en cours)."""
 
     async def run() -> None:
@@ -94,6 +95,7 @@ def _seed(client) -> None:
                 )
 
             hors_semaine = SEMAINE_DEBUT_UTC - timedelta(days=2)
+            semaine_precedente = SEMAINE_DEBUT_UTC - timedelta(days=1)
             # 1) Position BTC ouverte cette semaine — en cours.
             s_btc = signal("BTCUSDT", "BUY", datetime(2026, 8, 30, 10, 0, tzinfo=UTC))
             session.add(s_btc)
@@ -126,7 +128,28 @@ def _seed(client) -> None:
                     closed_at=datetime(2026, 8, 28, 14, 0, tzinfo=UTC),
                 )
             )
-            # 3) Position SOL ouverte hors semaine — toujours en cours.
+            # 3) Position XRP clôturée la semaine précédente en SL (-1 R).
+            s_xrp = signal("XRPUSDT", "BUY", semaine_precedente - timedelta(days=1))
+            session.add(s_xrp)
+            await session.flush()
+            position_xrp = PaperPosition(
+                signal_id=s_xrp.id,
+                status="CLOSED",
+                opened_at=semaine_precedente - timedelta(days=1),
+                closed_at=semaine_precedente,
+                result_r=Decimal("-1"),
+            )
+            session.add(position_xrp)
+            await session.flush()
+            session.add(
+                PaperTrade(
+                    paper_position_id=position_xrp.id,
+                    exit_reason="SL",
+                    exit_price=Decimal("98"),
+                    closed_at=semaine_precedente,
+                )
+            )
+            # 4) Position SOL ouverte hors semaine — toujours en cours.
             s_sol = signal("SOLUSDT", "BUY", hors_semaine)
             session.add(s_sol)
             await session.flush()
@@ -144,6 +167,21 @@ def _partition(client):
                 await repository.opened_between(SEMAINE_DEBUT_UTC, NOW),
                 await repository.closed_between(SEMAINE_DEBUT_UTC, NOW),
                 await repository.open_all(),
+            )
+
+    return asyncio.run(run())
+
+
+def _partition_precedente(client):
+    async def run():
+        async with client.db_factory() as session:
+            repository = PaperRepository(session)
+            return (
+                None,
+                await repository.closed_between(
+                    SEMAINE_DEBUT_UTC - timedelta(days=7), SEMAINE_DEBUT_UTC
+                ),
+                None,
             )
 
     return asyncio.run(run())
@@ -171,12 +209,14 @@ class TestEmbedRecap:
     def test_sections_et_bilan(self, client):
         _seed(client)
         ouvertes, cloturees, en_cours = _partition(client)
+        _, cloturees_precedentes, _ = _partition_precedente(client)
 
         embed = build_weekly_recap_embed(
             debut=SEMAINE_DEBUT_UTC.astimezone(PARIS),
             fin=NOW.astimezone(PARIS),
             ouvertes_semaine=ouvertes,
             cloturees_semaine=cloturees,
+            cloturees_semaine_precedente=cloturees_precedentes,
             en_cours=en_cours,
         )
         texte = {f.name: f.value for f in embed.fields}
@@ -189,7 +229,18 @@ class TestEmbedRecap:
         # Les deux positions ouvertes (y compris l'ancienne) restent affichées.
         assert "BTCUSDT" in texte["⏳ En cours (2)"]
         assert "SOLUSDT" in texte["⏳ En cours (2)"]
-        assert texte["Résultat de la semaine"] == "+2 R"
+
+        # Bilan enrichi : 1 trade TP (+2 R), PF indéfini (aucune perte).
+        bilan = texte["Résultat de la semaine"]
+        assert "1 trades · win 100.00% · +2 R" in bilan
+        assert "PF —" in bilan
+        assert "Meilleur +2 R · Pire +2 R" in bilan
+        # Comparaison S-1 : -1 R la semaine précédente -> delta +3 R.
+        assert "Semaine précédente : -1 R (1 trades)" in bilan
+        assert "Δ +3 R" in bilan
+
+        # Ventilation par direction : seule la clôture SELL de la semaine compte.
+        assert texte["Par direction (R)"] == "🔴 SELL : 1 trades · 100.00% · 2.00 R"
         assert "semaine du 24/08/2026 au 31/08/2026" in embed.title
 
     def test_semaine_sans_activite(self):
@@ -205,6 +256,7 @@ class TestEmbedRecap:
         assert texte["🏁 Clôturées cette semaine (0)"] == "—"
         assert texte["⏳ En cours (0)"] == "—"
         assert texte["Résultat de la semaine"] == "Aucune clôture cette semaine"
+        assert "Par direction (R)" not in texte
 
 
 # --- Service complet (base + notifieur factice) ---
@@ -223,6 +275,9 @@ class TestWeeklyRecapService:
         texte = {f.name: f.value for f in embed.fields}
         assert "BTCUSDT" in texte["📈 Nouvelles positions (1)"]
         assert "+2 R" in texte["Résultat de la semaine"]
+        # La comparaison S-1 est alimentée par le service (clôtures S-1 : -1 R).
+        assert "Semaine précédente : -1 R (1 trades)" in texte["Résultat de la semaine"]
+        assert "Par direction (R)" in texte
 
     def test_run_absorbe_les_echecs(self, client, monkeypatch):
         """Un échec (Discord KO, base KO) est loggé et absorbé : la boucle

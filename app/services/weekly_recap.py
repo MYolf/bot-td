@@ -6,7 +6,8 @@ salon Discord dédié :
 - les positions clôturées durant la semaine (TP/SL, résultat en R) ;
 - TOUTES les positions encore en cours : elles restent affichées dans chaque
   récap jusqu'à leur TP/SL ;
-- le bilan en R de la semaine.
+- le bilan en R de la semaine (win rate, moyenne, meilleur/pire trade,
+  comparaison avec la semaine précédente, ventilation par direction).
 
 Lecture seule de la base + envoi Discord : aucune décision, aucun ordre
 (règle absolue du projet — simulation locale uniquement).
@@ -78,6 +79,9 @@ class WeeklyRecapService:
             repository = PaperRepository(session)
             ouvertes = await repository.opened_between(week_start, now)
             cloturees = await repository.closed_between(week_start, now)
+            cloturees_precedentes = await repository.closed_between(
+                week_start - timedelta(days=7), week_start
+            )
             en_cours = await repository.open_all()
 
         embed = build_weekly_recap_embed(
@@ -85,6 +89,7 @@ class WeeklyRecapService:
             fin=now_local,
             ouvertes_semaine=ouvertes,
             cloturees_semaine=cloturees,
+            cloturees_semaine_precedente=cloturees_precedentes,
             en_cours=en_cours,
         )
         message_id = await self._notifier.send_signal(embed)
