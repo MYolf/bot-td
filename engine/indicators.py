@@ -80,6 +80,40 @@ def rsi(closes: list[float], length: int) -> list[float | None]:
     return out
 
 
+def true_range(
+    highs: list[float], lows: list[float], closes: list[float]
+) -> list[float | None]:
+    """True Range (comme ta.tr). Non défini sur la première bougie."""
+    n = len(closes)
+    out: list[float | None] = [None] * n
+    for i in range(1, n):
+        out[i] = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        )
+    return out
+
+
+def atr(
+    highs: list[float], lows: list[float], closes: list[float], length: int
+) -> list[float | None]:
+    """ATR (comme ta.atr) : RMA du true range.
+
+    Le true range est défini à partir de l'index 1 ; l'ATR l'est donc à
+    partir de l'index ``length`` (amorce RMA de ``length`` valeurs).
+    """
+    n = len(closes)
+    out: list[float | None] = [None] * n
+    tr = true_range(highs, lows, closes)
+    compact = [v for v in tr if v is not None]  # tr[i] défini pour i >= 1
+    smoothed = rma(compact, length)
+    for k, value in enumerate(smoothed):
+        if value is not None:
+            out[k + 1] = value
+    return out
+
+
 def macd(
     closes: list[float], fast: int, slow: int, signal_len: int
 ) -> tuple[list[float | None], list[float | None], list[float | None]]:

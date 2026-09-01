@@ -154,7 +154,22 @@
 
 ## 🔧 En cours / à venir
 
-Rien — le projet est complet. Pistes futures (hors périmètre Projet.md, à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), porter `momentum_mtf_v1`, prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
+### Phase 31 — Moteur de confluence (démarrée 2026-09-01)
+
+Objectif : plusieurs stratégies + confluence multi-dimensionnelle. Spécification de référence : **`CONFLUENCE.md`** (décision utilisateur non négociable : les indicateurs qualifient, seuls des événements structurels déclenchent).
+
+- ✅ **Étape 1 — Fondations** (2026-09-01) :
+  - `engine/structure.py` : swings fractals confirmés (k bougies de chaque côté), BOS sur clôture, CHOCH — famille DÉCLENCHEURS
+  - `engine/features.py` : états fusionnés par famille (tendance EMA, momentum RSI+MACD, volatilité ATR, volume RVOL sans auto-dilution, VWAP ancré 00:00 UTC) — famille QUALIFICATION, jamais déclencheur
+  - `engine/indicators.py` : ajout `true_range` / `atr` (portage `ta.atr`)
+  - `engine/feature_study.py` : étude forward returns conditionnels (4/16/48 bougies) — étape 1 du protocole anti-overfitting
+  - 14 nouveaux tests dont **propriété de préfixe** (anti-lookahead) pour toutes les features — 201/201 passent
+  - Première étude réelle BTCUSDT 15m 90 j : RVOL≥2 = meilleur profil ; états bearish > bullish sur la fenêtre (signature mean-reversion) ; tout est sous le seuil de frais à h=4 → la sélection de signaux sera déterminante. Une seule fenêtre = aucune conclusion définitive.
+- ⏳ **Étape 2** : liquidity sweeps, Order Blocks, FVG, displacement (définitions objectives de CONFLUENCE.md), puis étude individuelle de chaque feature
+- ⏳ **Étape 3** : moteur de confluence v0 (poids égaux, plafonds par catégorie) vs baseline momentum_v1
+- ⏳ **Étape 4** : profils `trend_v2` / `smc_v1` / `breakout_v1` (config déclarative), validation IS/OOS + walk-forward, seuils de score par tiers
+
+Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
 
