@@ -10,6 +10,7 @@ from app.discord.embeds import (
     build_stats_embed,
     format_price,
     format_risk_reward,
+    scaled_targets,
     strategy_label,
     timeframe_label,
 )
@@ -17,14 +18,19 @@ from app.paper_trading.statistics import compute_stats
 
 
 def _embed(action: str = "BUY"):
+    # Bracket cohérent avec la direction : BUY -> SL sous l'entrée, SELL au-dessus.
+    if action == "SELL":
+        stop_loss, take_profit = "105264.84", "103067.58"
+    else:
+        stop_loss, take_profit = "103800", "106000"
     return build_signal_embed(
         action=action,
         symbol="BTCUSDT",
         strategy="momentum_v1",
         timeframe="15",
         entry_price="104532.42",
-        stop_loss="103800",
-        take_profit="106000",
+        stop_loss=stop_loss,
+        take_profit=take_profit,
         risk_reward="2.0",
         signal_time=datetime(2026, 8, 22, 22, 14, 3, tzinfo=timezone.utc),
     )
@@ -74,6 +80,40 @@ class TestEmbed:
         assert champs["Take Profit"] == "106,000"
         assert champs["Risk/Reward"] == "1:2"
         assert champs["Signal Time"] == "22:14:03 UTC"
+
+    def test_sorties_partielles_buy(self):
+        # Risque = 104532.42 - 103800 = 732.42 -> TP1/2/3 à +1R/+2R/+3R.
+        embed = _embed("BUY")
+        champs = {f.name: f.value for f in embed.fields}
+        partielles = champs["Sorties partielles (suggestion)"]
+        assert "TP1 105,264.84 (+1R)" in partielles
+        assert "TP2 105,997.26 (+2R)" in partielles
+        assert "TP3 106,729.68 (+3R)" in partielles
+        # Break-even = remonter le SL sur l'entrée après TP1.
+        assert "Break-even : après TP1, SL → 104,532.42" in partielles
+
+    def test_sorties_partielles_sell(self):
+        # SELL : risque = SL - entry = 103800 - 104532.42 = 732.42 vers le bas.
+        embed = _embed("SELL")
+        champs = {f.name: f.value for f in embed.fields}
+        partielles = champs["Sorties partielles (suggestion)"]
+        assert "TP1 103,800 (+1R)" in partielles
+        assert "TP2 103,067.58 (+2R)" in partielles
+        assert "TP3 102,335.16 (+3R)" in partielles
+
+
+class TestScaledTargets:
+    def test_buy_multiples_de_r(self):
+        tp = scaled_targets("BUY", "100", "98")
+        assert tp == (Decimal("102"), Decimal("104"), Decimal("106"))
+
+    def test_sell_miroir(self):
+        tp = scaled_targets("SELL", "100", "102")
+        assert tp == (Decimal("98"), Decimal("96"), Decimal("94"))
+
+    def test_multiples_configurables(self):
+        tp = scaled_targets("BUY", "100", "99", multiples=(1, 3))
+        assert tp == (Decimal("101"), Decimal("103"))
 
     def test_heure_convertie_en_utc(self):
         # 22:14:03 UTC+2 -> 20:14:03 UTC

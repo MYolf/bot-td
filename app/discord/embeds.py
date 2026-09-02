@@ -57,6 +57,24 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def scaled_targets(
+    action: str,
+    entry_price: Decimal | float | str,
+    stop_loss: Decimal | float | str,
+    multiples: tuple[int, ...] = (1, 2, 3),
+) -> tuple[Decimal, ...]:
+    """Niveaux de sortie partielle dérivés du bracket : entry ± n × risque.
+
+    Pure présentation (suggestion de gestion humaine) : ni le pipeline, ni la
+    validation, ni le paper trading n'utilisent ces niveaux — le TP/SL du
+    signal restent la référence de la simulation.
+    """
+    entry = Decimal(str(entry_price))
+    risk = entry - Decimal(str(stop_loss)) if action == "BUY" else Decimal(str(stop_loss)) - entry
+    sign = Decimal("1") if action == "BUY" else Decimal("-1")
+    return tuple(entry + sign * Decimal(m) * risk for m in multiples)
+
+
 def build_signal_embed(
     *,
     action: str,
@@ -92,6 +110,19 @@ def build_signal_embed(
         name="Signal Time",
         value=_as_utc(signal_time).strftime("%H:%M:%S UTC"),
         inline=True,
+    )
+    # Sorties partielles suggérées (scale-out 1/3) + break-even : le risque
+    # initial (entry - SL) définit TP1/TP2/TP3 ; après TP1, remonter le SL sur
+    # l'entrée sécurise le trade. Décision de gestion humaine, aucun ordre.
+    tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
+    embed.add_field(
+        name="Sorties partielles (suggestion)",
+        value=(
+            f"TP1 {format_price(tp1)} (+1R) · TP2 {format_price(tp2)} (+2R) · "
+            f"TP3 {format_price(tp3)} (+3R)\n"
+            f"Break-even : après TP1, SL → {format_price(entry_price)}"
+        ),
+        inline=False,
     )
     if score is not None:
         embed.add_field(name="Signal Score", value=f"{score}/100", inline=True)
