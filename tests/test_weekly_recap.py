@@ -223,12 +223,23 @@ class TestEmbedRecap:
 
         assert "BTCUSDT" in texte["📈 Nouvelles positions (1)"]
         assert "LONG" in texte["📈 Nouvelles positions (1)"]
+        # Jour + heure d'ouverture (Paris = UTC+2 fin août).
+        assert "ouvert le dimanche 30/08 12:00" in texte["📈 Nouvelles positions (1)"]
         assert "ETHUSDT" in texte["🏁 Clôturées cette semaine (1)"]
         assert "TP @ 104" in texte["🏁 Clôturées cette semaine (1)"]
         assert "+2 R" in texte["🏁 Clôturées cette semaine (1)"]
-        # Les deux positions ouvertes (y compris l'ancienne) restent affichées.
+        # Ouverture -> clôture avec jour et heure (Paris) : ETH ouverte le
+        # 22/08 18:00 UTC, clôturée le 28/08 14:00 UTC.
+        assert (
+            "samedi 22/08 20:00 → vendredi 28/08 16:00"
+            in texte["🏁 Clôturées cette semaine (1)"]
+        )
+        # Les deux positions ouvertes (y compris l'ancienne) restent affichées,
+        # avec le jour et l'heure locale (plus d'UTC affiché nu).
         assert "BTCUSDT" in texte["⏳ En cours (2)"]
         assert "SOLUSDT" in texte["⏳ En cours (2)"]
+        assert "depuis le samedi 22/08 20:00" in texte["⏳ En cours (2)"]
+        assert "UTC" not in texte["⏳ En cours (2)"]
 
         # Bilan enrichi : 1 trade TP (+2 R), PF indéfini (aucune perte).
         bilan = texte["Résultat de la semaine"]

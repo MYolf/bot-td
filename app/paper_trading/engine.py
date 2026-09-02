@@ -105,6 +105,8 @@ class CloseOutcome:
     exit_reason: str
     exit_price: Decimal
     result_r: Decimal
+    opened_at: datetime
+    closed_at: datetime
 
 
 class PaperTradingEngine:
@@ -218,6 +220,8 @@ class PaperTradingEngine:
             exit_reason=exit_reason,
             exit_price=exit_price,
             result_r=result_r,
+            opened_at=_as_utc(position.opened_at),
+            closed_at=_as_utc(position.closed_at),
         )
 
     async def _check_symbol(

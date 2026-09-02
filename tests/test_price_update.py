@@ -6,6 +6,7 @@ notification Discord de clôture, position intacte si la bougie ne touche rien.
 """
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -246,6 +247,10 @@ class TestNotificationCloture:
         embed = fake_recap.sent[0]
         assert "Take Profit atteint" in embed.title
         assert "BTCUSDT" in embed.title
+        # Jour + heure de l'ouverture et de la clôture, en heure de Paris.
+        champs = {f.name: f.value for f in embed.fields}
+        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Ouvert le"])
+        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Clôturé le"])
 
     def test_cloture_par_signal_notifiee_aussi(self, client):
         """Voie historique : le prix d'entrée d'un nouveau signal clôture une

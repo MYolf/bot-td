@@ -6,14 +6,17 @@ from decimal import Decimal
 from app.discord.embeds import (
     GREEN,
     RED,
+    build_closure_embed,
     build_signal_embed,
     build_stats_embed,
+    format_day_time,
     format_price,
     format_risk_reward,
     scaled_targets,
     strategy_label,
     timeframe_label,
 )
+from app.paper_trading.engine import CloseOutcome
 from app.paper_trading.statistics import compute_stats
 
 
@@ -130,6 +133,58 @@ class TestScaledTargets:
         )
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Signal Time"] == "20:14:03 UTC"
+
+
+class TestFormatDayTime:
+    def test_jour_date_heure_paris_ete(self):
+        # Août : Paris à UTC+2 -> 12:00 UTC = 14:00 Paris (vendredi 28/08/2026).
+        assert format_day_time(datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)) == (
+            "vendredi 28/08 14:00"
+        )
+
+    def test_heure_d_hiver_utc_moins_1(self):
+        # 29/01/2027 23:30 UTC -> 30/01/2027 00:30 Paris (samedi).
+        assert format_day_time(datetime(2027, 1, 29, 23, 30, tzinfo=timezone.utc)) == (
+            "samedi 30/01 00:30"
+        )
+
+    def test_datetime_naif_traite_comme_utc(self):
+        # SQLite (tests) retourne des datetimes naïfs toujours en UTC.
+        assert format_day_time(datetime(2026, 8, 28, 12, 0)) == "vendredi 28/08 14:00"
+
+
+class TestClosureEmbed:
+    def _outcome(self):
+        return CloseOutcome(
+            position_id=1,
+            signal_id=2,
+            symbol="BTCUSDT",
+            strategy="momentum_v1",
+            action="BUY",
+            entry_price=Decimal("100"),
+            stop_loss=Decimal("98"),
+            take_profit=Decimal("104"),
+            risk_reward=Decimal("2"),
+            exit_reason="TP",
+            exit_price=Decimal("104"),
+            result_r=Decimal("2"),
+            opened_at=datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc),
+            closed_at=datetime(2026, 8, 30, 9, 30, tzinfo=timezone.utc),
+        )
+
+    def test_champs_dates_ouverture_et_cloture(self):
+        embed = build_closure_embed(self._outcome())
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Ouvert le"] == "vendredi 28/08 14:00"
+        assert champs["Clôturé le"] == "dimanche 30/08 11:30"
+        assert "heure de Paris" in embed.footer.text
+
+    def test_champs_metier_inchanges(self):
+        embed = build_closure_embed(self._outcome())
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Position"] == "LONG 🟢"
+        assert champs["Sortie"] == "104"
+        assert champs["Résultat"] == "+2 R"
 
 
 class TestStatsEmbed:

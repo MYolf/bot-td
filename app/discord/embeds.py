@@ -7,6 +7,7 @@ Format conforme à Projet.md §22, lisible sur mobile : titre normalisé
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import discord
 
@@ -55,6 +56,21 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+# Fuseau d'affichage des trades dans les embeds (récap hebdo, clôtures).
+PARIS_TZ = ZoneInfo("Europe/Paris")
+
+# Numéro du jour Python (date.weekday()) : lundi=0 ... dimanche=6.
+WEEKDAY_LABELS = [
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+]
+
+
+def format_day_time(value: datetime, tz: ZoneInfo = PARIS_TZ) -> str:
+    """Date + heure lisibles : "lundi 31/08 20:00" (heure de Paris par défaut)."""
+    local = _as_utc(value).astimezone(tz)
+    return f"{WEEKDAY_LABELS[local.weekday()]} {local.strftime('%d/%m %H:%M')}"
 
 
 def scaled_targets(
@@ -326,7 +342,15 @@ def build_closure_embed(outcome) -> discord.Embed:
     embed.add_field(name="Sortie", value=format_price(outcome.exit_price), inline=True)
     signe = "+" if outcome.result_r > 0 else ""
     embed.add_field(name="Résultat", value=f"{signe}{outcome.result_r.normalize()} R", inline=True)
-    embed.set_footer(text="Paper trading — simulation locale, aucun ordre réel")
+    embed.add_field(
+        name="Ouvert le", value=format_day_time(outcome.opened_at), inline=True
+    )
+    embed.add_field(
+        name="Clôturé le", value=format_day_time(outcome.closed_at), inline=True
+    )
+    embed.set_footer(
+        text="Paper trading — simulation locale, aucun ordre réel · heure de Paris"
+    )
     return embed
 
 
@@ -362,8 +386,9 @@ def build_weekly_recap_embed(
         f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
         f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
         f"{strategy_label(strategy_name)} · entry {format_price(signal.entry_price)} · "
-        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)}"
-        for _position, signal, strategy_name in ouvertes_semaine
+        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)} · "
+        f"ouvert le {format_day_time(position.opened_at)}"
+        for position, signal, strategy_name in ouvertes_semaine
     ]
     embed.add_field(
         name=f"📈 Nouvelles positions ({len(ouvertes_semaine)})",
@@ -379,7 +404,8 @@ def build_weekly_recap_embed(
             f"{'✅' if gagnant else '❌'} **{signal.symbol}** "
             f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
             f"{'TP' if gagnant else 'SL'} @ {format_price(trade.exit_price)} · "
-            f"{signe}{_position.result_r.normalize()} R"
+            f"{signe}{_position.result_r.normalize()} R · "
+            f"{format_day_time(_position.opened_at)} → {format_day_time(trade.closed_at)}"
         )
     embed.add_field(
         name=f"🏁 Clôturées cette semaine ({len(cloturees_semaine)})",
@@ -390,7 +416,7 @@ def build_weekly_recap_embed(
     lignes_cours = [
         f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
         f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
-        f"depuis le {_as_utc(position.opened_at).strftime('%d/%m %H:%M')} UTC · "
+        f"depuis le {format_day_time(position.opened_at)} · "
         f"entry {format_price(signal.entry_price)} · "
         f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)}"
         for position, signal, strategy_name in en_cours
@@ -443,6 +469,7 @@ def build_weekly_recap_embed(
         )
     embed.set_footer(
         text="Paper trading — simulation locale en R, aucun ordre réel · "
-        "les positions en cours restent affichées chaque semaine jusqu'à TP/SL"
+        "heures de Paris · les positions en cours restent affichées "
+        "chaque semaine jusqu'à TP/SL"
     )
     return embed

@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database.repository import PaperRepository
-from app.discord.embeds import build_weekly_recap_embed
+from app.discord.embeds import WEEKDAY_LABELS, build_weekly_recap_embed
 from app.services.discord_service import SignalNotifier
 
 logger = logging.getLogger(__name__)
@@ -29,11 +29,6 @@ logger = logging.getLogger(__name__)
 # Le sommeil est découpé (1 h max) : robuste aux changements d'heure système
 # et aux mises en pause du conteneur, l'échéance étant recalculée à chaque pas.
 _MAX_SLEEP_SECONDS = 3600
-
-# Numéro du jour Python (date.weekday()) : lundi=0 ... dimanche=6.
-WEEKDAY_LABELS = [
-    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
-]
 
 
 def compute_next_run(

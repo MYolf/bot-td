@@ -243,7 +243,16 @@ L'utilisateur a choisi l'option A : ne plus émettre que les signaux de score su
 - **Sémantique** (identique à l'étude `momentum_study.py`) : le filtre s'applique AVANT `would_fill` — une transition filtrée n'est ni émise ni ouverte en simulation, donc un signal postérieur de meilleure qualité **dans le même sens** restera émissible. Le filtre s'applique aussi à `replay_history` (reconstruction au démarrage) pour que l'état simulé corresponde à ce qui aurait été émis.
 - **Code** : `total_score()` extrait dans `engine/strategy.py` ; filtre 3bis dans `engine/runner.py` ; paramètre `min_score` dans `engine/position.py::replay_history` ; `.env.example` documenté. 308/308 tests (nouveaux : sous le seuil → non émis ni ouvert ; au seuil → émis ; seuil 0 → tout émis ; replay filtré).
 - **Attente raisonnable** : ~3× moins de signaux, expectancy brute améliorée (BTC +0.101 R, ETH +0.093 R en brut sur 4 ans avec ce filtre) mais ≈ 0 après frais taker — c'est un filtre de **qualité d'affichage**, pas une promesse de rentabilité.
-- **Déploiement** : ajouter `ENGINE_MIN_SCORE=45` au `.env` du VPS puis reconstruire le conteneur `engine`.
+- **Déploiement** : ajouter `ENGINE_MIN_SCORE=45` au `.env` du VPS puis reconstruire le conteneur `engine`. **FAIT le 2026-09-02** (logs vérifiés : `min_score=45` chargé, état simulé reconstruit, boucle de polling saine).
+
+### Jour et heure des trades dans les embeds (2026-09-03, DÉCISION UTILISATEUR)
+
+Demande : afficher le **jour et l'heure** des trades dans les embeds de clôture TP/SL et le récap hebdo, en **heure de Paris** (destination inchangée : salon récap).
+
+- `format_day_time()` dans `app/discord/embeds.py` : "lundi 31/08 20:00" (UTC → Europe/Paris, heure d'été/hiver gérée par `ZoneInfo`, datetimes naïfs SQLite traités comme UTC). `WEEKDAY_LABELS` déplacé d'`app/services/weekly_recap.py` vers `embeds.py` (plus de duplication).
+- Embed de clôture (`build_closure_embed`) : nouveaux champs « Ouvert le » et « Clôturé le » — `CloseOutcome` (`app/paper_trading/engine.py`) porte désormais `opened_at`/`closed_at` remplis depuis la position en base.
+- Récap hebdo (`build_weekly_recap_embed`) : « Nouvelles positions » affiche `ouvert le {jour+heure}` ; « Clôturées » affiche `{ouverture} → {clôture}` ; « En cours » passe de `dd/mm HH:MM UTC` au jour + heure de Paris. Footer mentionne l'heure de Paris.
+- 313/313 tests (nouveaux : `format_day_time` été/hiver/naïf, champs dates de l'embed de clôture, assertions jour+heure dans le récap et la notification de clôture).
 
 Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
