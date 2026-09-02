@@ -254,6 +254,10 @@ Question posée par l'utilisateur : garder le 15m **et** ajouter un moteur 1H po
 - ETH SELL toxique (−0.198 R taker) ; le bucket score 55 est **mauvais** en 1H (BTC −0.16 R brut, win 28 %) — le top score n'y rime plus avec qualité.
 - **Décision utilisateur : ne pas déployer le 1H, garder la config actuelle** (15m + filtre 45). Le paper trading 1H aurait re-mesuré un résultat déjà connu. Le problème de fond (frais vs taille du risque) est identique sur les deux timeframes ; pistes restantes : SL plus large par trade, autres déclencheurs.
 
+### Période d'observation 3 semaines + plans de décision — 2026-09-03
+
+L'utilisateur laisse tourner la config actuelle 3 semaines. **`PLAN_EVALUATION.md`** (racine) contient le plan complet à appliquer **le vendredi 25/09/2026** : PLAN VERT (conforme à l'audit → ne rien toucher, mesure 3 mois) et PLAN ROUGE (sous l'audit → vérif technique d'abord, puis backtest comparatif, puis décision). Critère de jugement : expectancy en R (le win rate 6/10 est inadapté au RR 1:2 — seuil de rentabilité 33,3 %), avec minimum 15 trades clôturés. Nettoyage associé : suppression de `data/cache/` (61 Mo régénérables) et `data/fib_dump/` (étude Fibonacci rejetée).
+
 ### Jour et heure des trades dans les embeds (2026-09-03, DÉCISION UTILISATEUR)
 
 Demande : afficher le **jour et l'heure** des trades dans les embeds de clôture TP/SL et le récap hebdo, en **heure de Paris** (destination inchangée : salon récap).
