@@ -245,6 +245,15 @@ L'utilisateur a choisi l'option A : ne plus émettre que les signaux de score su
 - **Attente raisonnable** : ~3× moins de signaux, expectancy brute améliorée (BTC +0.101 R, ETH +0.093 R en brut sur 4 ans avec ce filtre) mais ≈ 0 après frais taker — c'est un filtre de **qualité d'affichage**, pas une promesse de rentabilité.
 - **Déploiement** : ajouter `ENGINE_MIN_SCORE=45` au `.env` du VPS puis reconstruire le conteneur `engine`. **FAIT le 2026-09-02** (logs vérifiés : `min_score=45` chargé, état simulé reconstruit, boucle de polling saine).
 
+### Audit momentum_v1 sur 1H — 2026-09-03, REJET (idée d'un 2e moteur en parallèle)
+
+Question posée par l'utilisateur : garder le 15m **et** ajouter un moteur 1H pour tester les deux en paper trading. Réponse par l'audit d'abord (`python -m engine.momentum_study --timeframe 60 --days 1490`, BTC+ETH, 35 758 bougies chacun) — momentum_v1 n'avait jamais été audité en 1H :
+
+- **BTC 1H** (n=989) : brut +0.033 R, taker **−0.087 R**. **ETH 1H** (n=1166) : brut +0.004 R, taker **−0.116 R**.
+- Bucket score 45 : BTC brut +0.116 R / taker −0.004 R (équilibre) ; ETH brut +0.051 R / taker **−0.069 R** → pas d'accord inter-symboles après frais.
+- ETH SELL toxique (−0.198 R taker) ; le bucket score 55 est **mauvais** en 1H (BTC −0.16 R brut, win 28 %) — le top score n'y rime plus avec qualité.
+- **Décision utilisateur : ne pas déployer le 1H, garder la config actuelle** (15m + filtre 45). Le paper trading 1H aurait re-mesuré un résultat déjà connu. Le problème de fond (frais vs taille du risque) est identique sur les deux timeframes ; pistes restantes : SL plus large par trade, autres déclencheurs.
+
 ### Jour et heure des trades dans les embeds (2026-09-03, DÉCISION UTILISATEUR)
 
 Demande : afficher le **jour et l'heure** des trades dans les embeds de clôture TP/SL et le récap hebdo, en **heure de Paris** (destination inchangée : salon récap).
