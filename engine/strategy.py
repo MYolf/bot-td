@@ -84,32 +84,43 @@ class SignalResult:
     candle_close_time: int  # ms, borne incluse -> timestamp du signal
 
 
-def evaluate_momentum_v1(
-    candles: list[Candle], params: MomentumParams
-) -> SignalResult | None:
-    """Évalue la transition sur la DERNIÈRE bougie fermée de ``candles``.
+def compute_series(closes: list[float], params: MomentumParams) -> dict:
+    """Séries d'indicateurs complètes, alignées sur ``closes`` (calcul O(n)).
 
-    Retourne None : pas de transition, ou pas assez d'historique
-    (EMA200 + amorce MACD + bougie précédente).
+    Permet d'évaluer TOUTES les bougies en un seul passage (études/backtests)
+    au lieu de recalculer chaque indicateur par préfixe (O(n²)).
     """
-    closes = [c.close for c in candles]
-    # Amorce maximale : EMA lente (200) ; il faut en plus la bougie
-    # précédente (transition) et l'amorce du signal MACD (9 après slow-1).
-    min_len = params.ema_slow + params.macd_signal + 2
-    if len(closes) < min_len:
-        logger.warning(
-            "Historique insuffisant : %d bougies, minimum %d", len(closes), min_len
-        )
-        return None
-
-    ema_fast = ema(closes, params.ema_fast)
-    ema_slow = ema(closes, params.ema_slow)
-    rsi_values = rsi(closes, params.rsi_len)
     macd_line, macd_signal_line, macd_hist = macd(
         closes, params.macd_fast, params.macd_slow, params.macd_signal
     )
+    return {
+        "ema_fast": ema(closes, params.ema_fast),
+        "ema_slow": ema(closes, params.ema_slow),
+        "rsi": rsi(closes, params.rsi_len),
+        "macd": macd_line,
+        "macd_signal": macd_signal_line,
+        "macd_hist": macd_hist,
+    }
 
-    i = len(closes) - 1  # dernière bougie fermée
+
+def evaluate_at(
+    candles: list[Candle],
+    series: dict,
+    i: int,
+    params: MomentumParams,
+) -> SignalResult | None:
+    """Évalue la transition à la bougie ``i`` sur des séries PRÉCALCULÉES.
+
+    Même logique que ``evaluate_momentum_v1`` (source de vérité unique) ;
+    ``series`` vient de ``compute_series`` sur les mêmes closes.
+    """
+    ema_fast = series["ema_fast"]
+    ema_slow = series["ema_slow"]
+    rsi_values = series["rsi"]
+    macd_line = series["macd"]
+    macd_signal_line = series["macd_signal"]
+    macd_hist = series["macd_hist"]
+
     j = i - 1  # bougie précédente (pour la transition)
 
     # Comparaisons « na-safe » : en Pine, une comparaison avec na est fausse
@@ -143,7 +154,7 @@ def evaluate_momentum_v1(
     else:
         return None
 
-    entry = closes[i]
+    entry = candles[i].close
     if action == "BUY":
         stop_loss = entry * (1 - params.sl_pct)
         take_profit = entry * (1 + params.tp_pct)
@@ -179,6 +190,28 @@ def evaluate_momentum_v1(
         candle_open_time=candle.open_time,
         candle_close_time=close_boundary,
     )
+
+
+def evaluate_momentum_v1(
+    candles: list[Candle], params: MomentumParams
+) -> SignalResult | None:
+    """Évalue la transition sur la DERNIÈRE bougie fermée de ``candles``.
+
+    Retourne None : pas de transition, ou pas assez d'historique
+    (EMA200 + amorce MACD + bougie précédente).
+    """
+    closes = [c.close for c in candles]
+    # Amorce maximale : EMA lente (200) ; il faut en plus la bougie
+    # précédente (transition) et l'amorce du signal MACD (9 après slow-1).
+    min_len = params.ema_slow + params.macd_signal + 2
+    if len(closes) < min_len:
+        logger.warning(
+            "Historique insuffisant : %d bougies, minimum %d", len(closes), min_len
+        )
+        return None
+
+    series = compute_series(closes, params)
+    return evaluate_at(candles, series, len(closes) - 1, params)
 
 
 def build_payload(

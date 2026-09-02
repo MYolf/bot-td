@@ -149,3 +149,128 @@ def test_payload_sell_coherent() -> None:
     signal = TradingViewSignal(**payload)
     settings = Settings(_env_file=None)
     assert validate_signal(signal, settings).valid
+
+
+# ---------------------------------------------- parité evaluate_at (étude) --
+
+
+def test_evaluate_at_identique_au_prefixe() -> None:
+    """compute_series + evaluate_at == evaluate_momentum_v1 par préfixe.
+
+    Garantit que l'évaluation rapide multi-bougies (études/backtests O(n))
+    donne EXACTEMENT les mêmes transitions que la fonction de production.
+    """
+    import random
+
+    from engine.strategy import MomentumParams, compute_series, evaluate_at
+
+    rng = random.Random(42)
+    params = MomentumParams(ema_slow=30, macd_fast=5, macd_slow=10)  # amorce courte, MACD valide
+    min_len = params.ema_slow + params.macd_signal + 2
+    # Marché synthétique : marche aléatoire avec dérive par segments.
+    candles = []
+    price = 100.0
+    t = 0
+    for _ in range(min_len + 260):
+        drift = 0.02 if (t // 900_000 // 60) % 2 == 0 else -0.02
+        o = price
+        c = o + drift + rng.uniform(-0.4, 0.4)
+        h = max(o, c) + rng.uniform(0.0, 0.3)
+        l = min(o, c) - rng.uniform(0.0, 0.3)
+        candles.append(
+            Candle(t, t + 900_000 - 1, round(o, 2), round(h, 2), round(l, 2), round(c, 2), 10.0)
+        )
+        price = c
+        t += 900_000
+
+    closes = [c.close for c in candles]
+    series = compute_series(closes, params)
+    transitions = 0
+    for i in range(min_len - 1, len(candles)):
+        attendu = evaluate_momentum_v1(candles[: i + 1], params)
+        rapide = evaluate_at(candles, series, i, params)
+        if attendu is None:
+            assert rapide is None
+        else:
+            assert rapide is not None
+            assert rapide == attendu  # dataclass frozen : égalité champ à champ
+            transitions += 1
+    # Le marché synthétique doit produire des transitions (test non vide).
+    assert transitions >= 5
+
+
+# ------------------------------------------ momentum_study (audit rapide) --
+
+
+def test_all_transitions_identiques_au_replay_lent() -> None:
+    """Le passage unique O(n) retrouve les transitions du replay O(n²)."""
+    import random
+
+    from engine.backtest import replay
+    from engine.momentum_study import all_transitions
+
+    rng = random.Random(7)
+    params = MomentumParams(ema_slow=20, macd_fast=4, macd_slow=10)
+    candles = []
+    price = 100.0
+    t = 0
+    for _ in range(600):
+        drift = 0.03 if (t // 900_000 // 40) % 2 == 0 else -0.03
+        o = price
+        c = o + drift + rng.uniform(-0.4, 0.4)
+        candles.append(
+            Candle(
+                t,
+                t + 900_000 - 1,
+                o,
+                max(o, c) + 0.1,
+                min(o, c) - 0.1,
+                c,
+                10.0,
+            )
+        )
+        price = c
+        t += 900_000
+
+    rapides = all_transitions(candles, params)
+    # replay() filtre par position (pyramiding 0) ; les transitions brutes
+    # contiennent donc un sur-ensemble : chaque signal émis par replay doit
+    # être présent, aux mêmes caracteristiques près.
+    emis, _ignores = replay(candles, params)
+    rapide_par_temps = {r.candle_open_time: r for r in rapides}
+    for signal in emis:
+        assert signal.candle_open_time in rapide_par_temps
+        correspondant = rapide_par_temps[signal.candle_open_time]
+        assert correspondant.action == signal.action
+        assert correspondant.entry == signal.entry
+        assert correspondant.stop_loss == signal.stop_loss
+        assert correspondant.take_profit == signal.take_profit
+
+
+def test_to_entries_filtres_score_et_sens() -> None:
+    from engine.momentum_study import to_entries, total_score
+
+    class FauxSignal:
+        def __init__(self, action, open_time, scores):
+            self.action = action
+            self.candle_open_time = open_time
+            self.entry = 100.0
+            self.stop_loss = 99.0
+            self.take_profit = 102.0
+            self.score_trend, self.score_momentum, self.score_macd = scores
+
+    candles = [Candle(i * 900_000, i * 900_000 + 899_999, 1, 1, 1, 1, 1) for i in range(3)]
+    signaux = [
+        FauxSignal("BUY", 0, (20, 20, 15)),   # total 55
+        FauxSignal("SELL", 900_000, (10, 10, 8)),  # total 28
+        FauxSignal("BUY", 1_800_000, (20, 10, 8)),  # total 38
+    ]
+    assert total_score(signaux[0]) == 55
+    # Sans filtre : les trois passent, index résolus par open_time.
+    toutes = to_entries(candles, signaux)
+    assert [e.index for e in toutes] == [0, 1, 2]
+    assert toutes[0].score == 55
+    # Filtre score >= 38 : le SELL à 28 sort.
+    assert [e.score for e in to_entries(candles, signaux, min_score=38)] == [55, 38]
+    # Filtre BUY uniquement.
+    assert [e.action for e in to_entries(candles, signaux, side="buy")] == ["BUY", "BUY"]

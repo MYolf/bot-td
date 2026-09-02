@@ -223,6 +223,18 @@ Piste « davantage d'historique » de la Phase 31, exécutée sans AUCUN nouveau
 - **Walk-forward 60/30 j sur 4 ans (arbitre final)** : BTC n=567, expectancy **−0.129 R** (total −73 R, PF 0.82, DD 78 R) ; ETH n=573, expectancy **−0.103 R** (total −59 R, PF 0.86, DD 74 R). Avec ~570 trades de test par symbole, l'échantillon ne peut plus être invoqué.
 - **Décision : rejet définitif du moteur de confluence.** Les trois pistes de la Phase 31 sont maintenant épuisées : plus d'historique (cette reprise) ✓ testé, frais maker ✓ testé (insuffisant : l'edge brut lui-même n'existe pas de façon stable). Reste « autres déclencheurs », non planifié. `momentum_v1` reste l'unique stratégie en production. Leçon : une expectancy positive sur 90 j et un symbole (ETH 2025-2026) peut être un pur artefact de régime — l'accord inter-symboles et inter-régimes est le vrai test.
 
+### Audit momentum_v1 (production) sur 4 ans — 2026-09-02
+
+Question posée par l'utilisateur (6 trades paper : 2 TP / 4 SL — échantillon non significatif, RR 1:2 ⇒ seuil de rentabilité à 34 % de win rate) : momentum_v1 est-elle bénéficiaire ? Le score filtre-t-il les mauvais trades ?
+
+- ✅ **Outil** : `engine/momentum_study.py` — transitions en un seul passage O(n) (refactor `compute_series`/`evaluate_at` dans `engine/strategy.py`, parité exacte testée avec `evaluate_momentum_v1`), simulation via le simulateur commun (pyramiding 0, renversement, frais en R), sorties global/par année (brut/taker/maker)/par direction/par bucket de score, variantes `--side`/`--min-score`. 304/304 tests.
+- **Résultats (15m, 2022-08 → 2026-09, n=2204 BTC / 2793 ETH trades)** :
+  - momentum_v1 telle quelle : **négative chaque année sur les deux symboles en taker** (BTC −0.137 R, ETH −0.104 R d'expectancy) ; même brut ≈ 0 (BTC −0.017, ETH +0.016). Le problème n'est pas que les frais : il n'y a pas d'edge brut.
+  - **Le score sépare réellement les trades** (intuition utilisateur validée) : bucket 45 = le seul positif en brut sur les DEUX symboles (BTC +0.06, ETH +0.095), buckets 28-38 négatifs partout. Mais non monotone (38 pire que 35, 55 ≤ 45) et taker reste négatif.
+  - Variante `--min-score 45` : brut positif sur les deux (BTC +0.101/n=763, ETH +0.093/n=1010), maker positif, taker ≈ 0.
+  - Variante `--side buy --min-score 45` : BTC positif même taker (+0.082 R, n=382) MAIS instable (2023-2025 positifs, 2022 et **2026 négatifs**) et ne se transfère pas à ETH (négatif). Sélection post-hoc = non déployable sans validation complémentaire.
+- **Conclusion** : aucune variante simple de momentum_v1 n'est bénéficiaire après frais taker de façon robuste sur 4 ans. Le socle (score) a un vrai pouvoir séparateur partiel ; le filtre score ≥ 45 divise les signaux par ~3 et améliore la qualité brute — défendable pour un affichage « haute qualité », pas une promesse de profit. Production inchangée en attente de décision utilisateur.
+
 Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)
