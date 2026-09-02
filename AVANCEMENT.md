@@ -235,6 +235,16 @@ Question posée par l'utilisateur (6 trades paper : 2 TP / 4 SL — échantillon
   - Variante `--side buy --min-score 45` : BTC positif même taker (+0.082 R, n=382) MAIS instable (2023-2025 positifs, 2022 et **2026 négatifs**) et ne se transfère pas à ETH (négatif). Sélection post-hoc = non déployable sans validation complémentaire.
 - **Conclusion** : aucune variante simple de momentum_v1 n'est bénéficiaire après frais taker de façon robuste sur 4 ans. Le socle (score) a un vrai pouvoir séparateur partiel ; le filtre score ≥ 45 divise les signaux par ~3 et améliore la qualité brute — défendable pour un affichage « haute qualité », pas une promesse de profit. Production inchangée en attente de décision utilisateur.
 
+### Option A — filtre qualité ENGINE_MIN_SCORE en production (2026-09-02, DÉCISION UTILISATEUR)
+
+L'utilisateur a choisi l'option A : ne plus émettre que les signaux de score suffisant.
+
+- **Nouvelle config** `ENGINE_MIN_SCORE` (défaut 0 = comportement historique) : score minimal pour qu'une transition soit ÉMISE. Valeur retenue : **45** (seul bucket positif en brut sur BTC ET ETH dans l'audit ci-dessus).
+- **Sémantique** (identique à l'étude `momentum_study.py`) : le filtre s'applique AVANT `would_fill` — une transition filtrée n'est ni émise ni ouverte en simulation, donc un signal postérieur de meilleure qualité **dans le même sens** restera émissible. Le filtre s'applique aussi à `replay_history` (reconstruction au démarrage) pour que l'état simulé corresponde à ce qui aurait été émis.
+- **Code** : `total_score()` extrait dans `engine/strategy.py` ; filtre 3bis dans `engine/runner.py` ; paramètre `min_score` dans `engine/position.py::replay_history` ; `.env.example` documenté. 308/308 tests (nouveaux : sous le seuil → non émis ni ouvert ; au seuil → émis ; seuil 0 → tout émis ; replay filtré).
+- **Attente raisonnable** : ~3× moins de signaux, expectancy brute améliorée (BTC +0.101 R, ETH +0.093 R en brut sur 4 ans avec ce filtre) mais ≈ 0 après frais taker — c'est un filtre de **qualité d'affichage**, pas une promesse de rentabilité.
+- **Déploiement** : ajouter `ENGINE_MIN_SCORE=45` au `.env` du VPS puis reconstruire le conteneur `engine`.
+
 Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)

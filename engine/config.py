@@ -39,6 +39,11 @@ class EngineSettings(BaseSettings):
     )
     # Historique récupéré à chaque sondage : 500 >> EMA200 + amorce MACD.
     engine_candle_limit: int = Field(default=500, alias="ENGINE_CANDLE_LIMIT")
+    # Filtre qualité : score minimal (tendance 20 + momentum 20 + MACD 15,
+    # max 55) pour qu'une transition soit ÉMISE. 0 = tout émettre (comportement
+    # historique). 45 = seuls les signaux francs (audit 2026-09-02 : seul
+    # bucket positif en brut sur BTC ET ETH ; divise les signaux par ~3).
+    engine_min_score: int = Field(default=0, alias="ENGINE_MIN_SCORE")
 
     # Secret partagé avec le backend (jamais loggé, jamais commité).
     tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")

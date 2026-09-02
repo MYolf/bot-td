@@ -20,7 +20,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.strategy import Candle, MomentumParams, evaluate_momentum_v1
+from engine.strategy import (
+    Candle,
+    MomentumParams,
+    evaluate_momentum_v1,
+    total_score,
+)
 
 LONG = "long"
 SHORT = "short"
@@ -80,12 +85,17 @@ class PositionTracker:
 
 
 def replay_history(
-    candles: list[Candle], params: MomentumParams | None = None
+    candles: list[Candle],
+    params: MomentumParams | None = None,
+    min_score: int = 0,
 ) -> PositionTracker:
     """Reconstruit l'état de la position en rejouant l'historique (sans émettre).
 
     Utilisé au démarrage : le moteur devient sans état persistant — tout est
-    recalculé depuis les bougies Binance.
+    recalculé depuis les bougies Binance. ``min_score`` applique le même filtre
+    qualité que le runner (ENGINE_MIN_SCORE) : une transition filtrée n'ouvre
+    PAS de position simulée, donc un signal de qualité postérieur dans le même
+    sens pourra toujours être émis.
     """
     params = params or MomentumParams()
     tracker = PositionTracker()
@@ -93,7 +103,9 @@ def replay_history(
     for i in range(min_len, len(candles)):
         tracker.apply_candle(candles[i])
         result = evaluate_momentum_v1(candles[: i + 1], params)
-        if result is not None and tracker.would_fill(result.action):
+        if result is None or total_score(result) < min_score:
+            continue
+        if tracker.would_fill(result.action):
             tracker.open(
                 result.action, result.entry, result.stop_loss, result.take_profit
             )

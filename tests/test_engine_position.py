@@ -4,8 +4,8 @@ Réplication du comportement d'alerte TradingView : SL/TP, priorité du SL,
 pyramiding = 0 (signal dans le sens de la position ignoré), renversement.
 """
 
-from engine.position import PositionTracker, replay_history
-from engine.strategy import Candle
+from engine.position import LONG, PositionTracker, replay_history
+from engine.strategy import Candle, MomentumParams
 
 INTERVAL_MS = 900_000
 
@@ -83,3 +83,28 @@ def test_replay_history_construit_la_position() -> None:
     # Le rallye final (+2 %/bougie) referme forcément toute position courte
     # très vite ; on vérifie surtout qu'aucune exception et un état cohérent.
     assert tracker.position is None or tracker.position.side in ("long", "short")
+
+
+# ------------------------------------------- replay_history avec min_score --
+
+
+def test_replay_history_filtre_score() -> None:
+    params = MomentumParams(ema_fast=3, ema_slow=5, macd_fast=3, macd_slow=6, macd_signal=3)
+
+    def candle(i, c):
+        return Candle(i * 900_000, i * 900_000 + 899_999, c, c, c, c, 1.0)
+
+    # Baisse puis remontée LENTE (< 2 % au total) : une transition BUY ouvre
+    # un long, mais le TP (entry x 1.02) n'est jamais touché ensuite — la
+    # position doit donc rester ouverte à la fin du replay.
+    closes = [100.0 - 0.1 * i for i in range(20)]
+    closes += [98.0 + 0.05 * k for k in range(1, 21)]
+    candles = [candle(i, c) for i, c in enumerate(closes)]
+    tracker_libre = replay_history(candles, params)
+    assert tracker_libre.position is not None
+    assert tracker_libre.position.side == LONG
+
+    # Seuil impossible (56 > max 55) : aucune transition n'ouvre de position —
+    # le filtre qualité s'applique aussi à la reconstruction de l'état.
+    tracker_filtre = replay_history(candles, params, min_score=56)
+    assert tracker_filtre.position is None

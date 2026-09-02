@@ -272,3 +272,78 @@ async def test_echec_price_update_absorbe(engine_settings) -> None:
     await engine.poll_once()  # échec loggé, pas de crash
 
     assert price_sender.appels == 1
+
+
+# ------------------------------------------ filtre qualité ENGINE_MIN_SCORE --
+
+
+def _fake_result(action: str = "BUY", trend: int = 10, momentum: int = 10, macd: int = 8) -> SignalResult:
+    """Signal dont le score total est paramétrable (28 par défaut)."""
+    return SignalResult(
+        action=action,
+        entry=100.0,
+        stop_loss=99.0,
+        take_profit=102.0,
+        score_trend=trend,
+        score_momentum=momentum,
+        score_macd=macd,
+        candle_open_time=0,
+        candle_close_time=INTERVAL_MS,
+    )
+
+
+async def test_signal_sous_le_seuil_non_emis_ni_ouvert(engine_settings, monkeypatch) -> None:
+    monkeypatch.setenv("ENGINE_MIN_SCORE", "45")
+    settings = EngineSettings(_env_file=None)
+    candles = make_candles(300)
+    nouvelle = make_candles(301, start_open=1_000_000)
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: _fake_result()  # total 28
+    )
+    fetcher = FakeFetcher([candles, nouvelle])
+    sender = FakeSender()
+    engine = SignalEngine(settings, fetcher, sender)
+
+    await engine.poll_once()  # premier relevé (reconstruction)
+    await engine.poll_once()  # transition score 28 < 45
+
+    assert sender.payloads == []
+    # La position simulée n'est PAS ouverte : un signal postérieur de qualité
+    # dans le même sens restera émissible.
+    assert engine._trackers["BTCUSDT"].position is None
+
+
+async def test_signal_au_seuil_emis(engine_settings, monkeypatch) -> None:
+    monkeypatch.setenv("ENGINE_MIN_SCORE", "45")
+    settings = EngineSettings(_env_file=None)
+    candles = make_candles(300)
+    nouvelle = make_candles(301, start_open=1_000_000)
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()  # 55
+    )
+    fetcher = FakeFetcher([candles, nouvelle])
+    sender = FakeSender()
+    engine = SignalEngine(settings, fetcher, sender)
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    assert len(sender.payloads) == 1
+    assert engine._trackers["BTCUSDT"].position is not None
+
+
+async def test_seuil_zero_tout_emis(engine_settings, monkeypatch) -> None:
+    # Comportement historique inchangé : 0 = aucun filtrage.
+    candles = make_candles(300)
+    nouvelle = make_candles(301, start_open=1_000_000)
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: _fake_result()  # 28
+    )
+    fetcher = FakeFetcher([candles, nouvelle])
+    sender = FakeSender()
+    engine = SignalEngine(engine_settings, fetcher, sender)
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    assert len(sender.payloads) == 1

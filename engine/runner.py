@@ -39,6 +39,7 @@ from engine.strategy import (
     SignalResult,
     build_payload,
     evaluate_momentum_v1,
+    total_score,
 )
 from engine.webhook_client import send_price_update, send_signal
 
@@ -93,8 +94,12 @@ class SignalEngine:
             if previous_open is None:
                 # Premier relevé depuis le démarrage : on reconstruit l'état de
                 # la position simulée depuis l'historique (sans rien émettre),
-                # puis on mémorise la dernière bougie fermée.
-                self._trackers[symbol] = replay_history(candles, self._params)
+                # puis on mémorise la dernière bougie fermée. Le filtre qualité
+                # (ENGINE_MIN_SCORE) s'applique aussi ici : une transition
+                # historique filtrée n'ouvre pas de position simulée.
+                self._trackers[symbol] = replay_history(
+                    candles, self._params, min_score=self._settings.engine_min_score
+                )
                 logger.info(
                     "Premier relevé symbol=%s : %d bougies fermées, position simulée=%s",
                     symbol,
@@ -120,6 +125,19 @@ class SignalEngine:
             # 3) Transition sur la nouvelle bougie fermée ?
             result = evaluate_momentum_v1(candles, self._params)
             if result is None:
+                continue
+            # 3bis) Filtre qualité (ENGINE_MIN_SCORE) : une transition filtrée
+            # n'est ni émise ni ouverte en simulation — un signal postérieur
+            # de meilleure qualité dans le même sens restera émissible.
+            score = total_score(result)
+            if score < self._settings.engine_min_score:
+                logger.info(
+                    "Transition %s filtrée symbol=%s score=%d < %d (ENGINE_MIN_SCORE)",
+                    result.action,
+                    symbol,
+                    score,
+                    self._settings.engine_min_score,
+                )
                 continue
             # 4) Fidélité TradingView : n'émettre que si un ordre simulé
             #    s'exécuterait (plat ou renversement ; pyramiding = 0).
@@ -189,11 +207,12 @@ class SignalEngine:
 
     async def run(self) -> None:
         logger.info(
-            "Moteur démarré symbols=%s timeframe=%s poll=%ds webhook=%s",
+            "Moteur démarré symbols=%s timeframe=%s poll=%ds webhook=%s min_score=%d",
             self._settings.engine_symbols,
             self._settings.engine_timeframe,
             self._settings.engine_poll_seconds,
             self._settings.engine_webhook_url,
+            self._settings.engine_min_score,
         )
         while True:
             await self.poll_once()

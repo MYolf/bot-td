@@ -84,6 +84,16 @@ class SignalResult:
     candle_close_time: int  # ms, borne incluse -> timestamp du signal
 
 
+def total_score(result: SignalResult) -> int:
+    """Score total d'un signal momentum_v1 (max 55 en pratique).
+
+    momentum_v1 n'évalue que tendance /20 + momentum /20 + MACD /15 ; le
+    barème backend va à 100 mais les composantes volume/structure/HTF ne
+    sont jamais envoyées. Utilisé par le filtre ENGINE_MIN_SCORE.
+    """
+    return result.score_trend + result.score_momentum + result.score_macd
+
+
 def compute_series(closes: list[float], params: MomentumParams) -> dict:
     """Séries d'indicateurs complètes, alignées sur ``closes`` (calcul O(n)).
 
