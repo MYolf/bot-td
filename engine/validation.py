@@ -18,6 +18,7 @@ Usage :
     python -m engine.validation --symbol BTCUSDT --days 195 --stage is
     python -m engine.validation --symbol BTCUSDT --days 195 --stage oos
     python -m engine.validation --symbol BTCUSDT --days 195 --stage wf
+    python -m engine.validation --symbol BTCUSDT --timeframe 60 --days 1490 --stage regimes
 """
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ from engine.strategy import Candle
 
 DAY_MS = 86_400_000
 DEFAULT_CACHE_DIR = Path("data/cache")
+
+# Frais aller-retour hypothèses : taker = défaut CLI (2 x 0.06 %), maker
+# = 2 x 0.01 % (remise BNB, ordres limite). Le brut (frais = 0) sépare
+# « pas d'edge » de « edge mangé par les frais » (leçon Phase 31).
+MAKER_FEE_RT = 0.0002
 
 
 # ------------------------------------------------------------------ données --
@@ -124,6 +130,39 @@ def trades_in_window(
 ) -> list[Trade]:
     """Trades ouverts dans la fenêtre utile (exclut le warmup)."""
     return [t for t in trades if candles[t.open_index].open_time >= window_start_ms]
+
+
+def split_years(
+    candles: list[Candle], warmup_days: int = 20
+) -> list[tuple[int, list[Candle], int]]:
+    """Découpe l'historique par année civile (stage regimes).
+
+    Chaque part inclut un préfixe de ``warmup_days`` pour l'amorce des
+    indicateurs ; la fenêtre UTILE commence au 1er janvier 00:00 UTC (les
+    trades ouverts avant sont exclus des métriques). Retourne une liste de
+    tuples (année, part, window_start_ms).
+    """
+    if not candles:
+        raise ValueError("historique vide")
+    warmup = warmup_days * DAY_MS
+    years = sorted(
+        {
+            datetime.fromtimestamp(c.open_time / 1000, tz=timezone.utc).year
+            for c in candles
+        }
+    )
+    parts: list[tuple[int, list[Candle], int]] = []
+    for year in years:
+        start_ms = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        end_ms = int(datetime(year + 1, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        part = [
+            c
+            for c in candles
+            if c.open_time >= start_ms - warmup and c.close_time < end_ms
+        ]
+        if part:
+            parts.append((year, part, start_ms))
+    return parts
 
 
 # -------------------------------------------------------------- évaluation --
@@ -275,6 +314,25 @@ async def _run(args: argparse.Namespace) -> None:
             print(f"  {key} = {value}")
         return
 
+    if args.stage == "regimes":
+        # Finalistes FIGÉS uniquement (comme oos/wf) : aucun réglage ici.
+        for variant in variants:
+            print(f"\n--- {variant.name} ---")
+            for year, part, start_ms in split_years(candles):
+                brut = compute_metrics(evaluate(part, variant, 0.0, start_ms))
+                if brut.get("n", 0) == 0:
+                    print(f"{year} : aucun trade")
+                    continue
+                taker = compute_metrics(evaluate(part, variant, args.fee, start_ms))
+                maker = compute_metrics(evaluate(part, variant, MAKER_FEE_RT, start_ms))
+                print(
+                    f"{year} : n={brut['n']:<4} win={brut['win_rate']}%  "
+                    f"brut exp={brut['expectancy']}R total={brut['total_r']}R  |  "
+                    f"taker exp={taker['expectancy']}R total={taker['total_r']}R  |  "
+                    f"maker exp={maker['expectancy']}R total={maker['total_r']}R"
+                )
+        return
+
     is_part, oos_part, is_start, oos_start = split_is_oos(candles, args.is_days, args.oos_days)
     if args.stage == "is":
         print(f"IS : {_fmt(is_start)} -> {_fmt(candles[-1].close_time)} (réglages autorisés)")
@@ -339,7 +397,9 @@ def main() -> None:
     parser.add_argument("--is-days", type=int, default=90)
     parser.add_argument("--oos-days", type=int, default=90)
     parser.add_argument("--fee", type=float, default=0.0012)
-    parser.add_argument("--stage", choices=("is", "oos", "wf"), required=True)
+    parser.add_argument(
+        "--stage", choices=("is", "oos", "wf", "regimes"), required=True
+    )
     args = parser.parse_args()
     asyncio.run(_run(args))
 

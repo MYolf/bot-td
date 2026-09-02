@@ -205,6 +205,24 @@ Objectif : tester l'incrément informationnel du retracement Fibonacci (bande 0.
 
 - **Décision : feature rejetée, OOS volontairement non consommé.** Le critère §7-1 (n ≥ 30 dans chaque groupe) échoue en IS sur les 4 couples avec un défaut massif (≤ 8 événements OB+Fib en 90 j) : la coïncidence OB retesté × Fib actif × même direction × grade inclusion/overlap est trop rare pour être mesurée sur ce périmètre. La validation exigeant le critère en IS **et** en OOS, l'OOS ne pouvait rien rattraper — le lancer n'aurait rien apporté. Les deltas 15m vont dans le sens de l'hypothèse (ETH +2.07 R net) mais sur 7-8 événements = bruit ; les deltas 1H sont majoritairement négatifs ; les contrôles de spécificité ne montrent pas d'effet bande cohérent. Production (`momentum_v1`) inchangée, code d'étude archivé dans `engine/fib_study.py` si l'hypothèse est re-testée un jour avec davantage d'historique.
 
+### Reprise Phase 31 — confluence sur 4 ans multi-régimes (2026-09-02, REJET DÉFINITIF)
+
+Piste « davantage d'historique » de la Phase 31, exécutée sans AUCUN nouveau réglage : finalistes figés (`smc_v1/bracket`, `smc_v1/time16`), 1H uniquement (le 15m est écarté d'office : frais structurellement rédhibitoires, leçon Phase 31), BTC + ETH sur **2022-08 → 2026-09** (35 758 bougies 1H par symbole, ~1 100 trades/variante/symbole). Réserve documentée : les ~195 derniers jours avaient déjà été consommés par l'étude initiale — le verdict se fonde sur les années anciennes jamais ouvertes et la stabilité d'ensemble.
+
+- ✅ **Outil** : stage `regimes` dans `engine/validation.py` — découpage par année civile (`split_years`, warmup 20 j en préfixe), finalistes figés évalués par année en **brut** (frais=0) / **taker** (0.12 % A/R) / **maker** (0.02 % A/R) ; 301/301 tests
+- **Résultats par année (expectancy brut, R)** :
+
+  | Variante | 2022 | 2023 | 2024 | 2025 | 2026 |
+  |---|---|---|---|---|---|
+  | BTC bracket | −0.128 | +0.147 | +0.063 | −0.109 | +0.031 |
+  | BTC time16 | −0.014 | +0.071 | +0.188 | +0.067 | −0.019 |
+  | ETH bracket | −0.038 | +0.012 | −0.058 | +0.102 | +0.096 |
+  | ETH time16 | −0.059 | −0.008 | −0.144 | +0.250 | +0.111 |
+
+- **Lecture** : brut instable et proche de zéro partout ; en taker négatif **chaque année sauf une** (ETH time16 2025 : +0.144, n=254) ; en maker marginal et porté par une seule année (BTC time16 → 2024, ETH time16 → 2025). **Aucune année positive sur les deux symboles à la fois** : l'edge apparent se déplace avec le régime et le symbole — signature de bruit, pas de structure.
+- **Walk-forward 60/30 j sur 4 ans (arbitre final)** : BTC n=567, expectancy **−0.129 R** (total −73 R, PF 0.82, DD 78 R) ; ETH n=573, expectancy **−0.103 R** (total −59 R, PF 0.86, DD 74 R). Avec ~570 trades de test par symbole, l'échantillon ne peut plus être invoqué.
+- **Décision : rejet définitif du moteur de confluence.** Les trois pistes de la Phase 31 sont maintenant épuisées : plus d'historique (cette reprise) ✓ testé, frais maker ✓ testé (insuffisant : l'edge brut lui-même n'existe pas de façon stable). Reste « autres déclencheurs », non planifié. `momentum_v1` reste l'unique stratégie en production. Leçon : une expectancy positive sur 90 j et un symbole (ETH 2025-2026) peut être un pur artefact de régime — l'accord inter-symboles et inter-régimes est le vrai test.
+
 Pistes futures hors confluence (à ne faire que sur demande explicite) : ajouter des symboles/timeframes (`ENGINE_*` dans `.env`, zéro code), prendre TradingView payant et brancher l'alerte réelle (Phase 16, runbook conservé ci-dessous).
 
 ## 👤 Ce qu'il ME reste à faire (de ton côté)

@@ -14,6 +14,7 @@ from engine.validation import (
     Variant,
     evaluate,
     split_is_oos,
+    split_years,
     trades_in_window,
     walk_forward,
 )
@@ -171,3 +172,54 @@ def test_exit_policy_rejette_valeurs_invalides() -> None:
         ExitPolicy("autre")
     with pytest.raises(ValueError):
         ExitPolicy("time", 0)
+
+
+# ------------------------------------------------------------ split_years --
+
+
+def _candles_entre(debut_ms: int, fin_ms: int, interval_ms: int = 3_600_000) -> list[Candle]:
+    """Bougies 1h couvrant [debut_ms, fin_ms[ (flat : contenu sans importance)."""
+    return [
+        Candle(
+            open_time=t,
+            close_time=t + interval_ms - 1,
+            open=100.0,
+            high=100.5,
+            low=99.5,
+            close=100.0,
+            volume=10.0,
+        )
+        for t in range(debut_ms, fin_ms, interval_ms)
+    ]
+
+
+def test_split_years_une_part_par_annee_civile() -> None:
+    from datetime import datetime, timezone
+
+    def ms(an: int, mois: int, jour: int) -> int:
+        return int(datetime(an, mois, jour, tzinfo=timezone.utc).timestamp() * 1000)
+
+    # Historique du 2024-11-15 au 2025-02-10 : deux années civiles.
+    candles = _candles_entre(ms(2024, 11, 15), ms(2025, 2, 10))
+    parts = split_years(candles, warmup_days=20)
+    assert [annee for annee, _part, _start in parts] == [2024, 2025]
+
+    annee_2024, part_2024, start_2024 = parts[0]
+    annee_2025, part_2025, start_2025 = parts[1]
+    # Fenêtre utile : 1er janvier 00:00 UTC de chaque année.
+    assert start_2024 == ms(2024, 1, 1)
+    assert start_2025 == ms(2025, 1, 1)
+    # 2024 : toute la part est dans l'année (pas de warmup avant le 15/11 ? si :
+    # l'historique commence le 15/11, la part commence là).
+    assert part_2024[0].open_time == ms(2024, 11, 15)
+    assert all(c.close_time < ms(2025, 1, 1) for c in part_2024)
+    # 2025 : préfixe de warmup = bougies de décembre 2024.
+    assert part_2025[0].open_time <= ms(2025, 1, 1) - 20 * DAY_MS
+    assert part_2025[0].open_time > ms(2024, 12, 10)  # ~20 j avant le 1er janvier
+
+
+def test_split_years_historique_vide_rejete() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        split_years([])
