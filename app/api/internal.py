@@ -24,6 +24,7 @@ from app.config.settings import Settings, get_settings
 from app.database.database import provide_session_factory
 from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import SignalNotifier, notify_closure, provide_recap_notifier
+from app.services.health_monitor import record_price_update
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,9 @@ async def receive_price_update(
     if update.symbol not in settings.allowed_symbols:
         logger.warning("Price update rejected: symbol not allowed symbol=%s", update.symbol)
         return {"status": "rejected", "reason": "symbol_not_allowed"}
+
+    # Heartbeat pour les alertes de santé : prouve que le moteur est vivant.
+    record_price_update()
 
     if paper_engine is None:
         return {"status": "ok", "closed": 0}

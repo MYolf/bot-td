@@ -64,6 +64,8 @@ _notifier: SignalNotifier | None = None
 # Notifieur du salon récap quotidien (clôtures TP/SL, résumé de 22h) : peut
 # rester None (salon non configuré) — les notifications sont alors ignorées.
 _recap_notifier: SignalNotifier | None = None
+# Notifieur du salon des logs (alertes de santé) : None = salon non configuré.
+_health_notifier: SignalNotifier | None = None
 
 
 def set_notifier(notifier: SignalNotifier | None) -> None:
@@ -88,6 +90,17 @@ def set_recap_notifier(notifier: SignalNotifier | None) -> None:
 def provide_recap_notifier() -> SignalNotifier | None:
     """Dépendance FastAPI : notifieur du salon récap (None si non configuré)."""
     return _recap_notifier
+
+
+def set_health_notifier(notifier: SignalNotifier | None) -> None:
+    """Enregistre le notifieur du salon des logs (None = désactivé)."""
+    global _health_notifier
+    _health_notifier = notifier
+
+
+def provide_health_notifier() -> SignalNotifier | None:
+    """Dépendance : notifieur du salon des logs (None si non configuré)."""
+    return _health_notifier
 
 
 async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:

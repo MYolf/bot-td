@@ -290,6 +290,24 @@ def build_strategies_embed(strategies: list, compte: dict[str, int]) -> discord.
 ORANGE = 0xE67E22  # récap quotidien
 
 
+def build_health_alert_embed(*, component: str, detail: str, resolved: bool) -> discord.Embed:
+    """Embed d'une alerte de santé (transition OK -> KO) ou de sa résolution.
+
+    Publié dans le salon des logs par `HealthAlertService` : purement
+    informatif, aucune action automatique n'est effectuée.
+    """
+    if resolved:
+        embed = discord.Embed(
+            title=f"✅ Résolu — {component}", description=detail, color=GREEN
+        )
+    else:
+        embed = discord.Embed(
+            title=f"🚨 Alerte santé — {component}", description=detail, color=RED
+        )
+    embed.set_footer(text="Contrôle automatique — aucune action effectuée")
+    return embed
+
+
 def build_closure_embed(outcome) -> discord.Embed:
     """Embed d'une position paper clôturée (TP ou SL détecté à la bougie).
 

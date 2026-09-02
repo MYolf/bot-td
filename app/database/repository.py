@@ -212,6 +212,15 @@ class SignalRepository:
         rows = (await self._session.execute(stmt)).all()
         return {status: count for status, count in rows}
 
+    async def count_errors_since(self, since: datetime) -> int:
+        """Signaux ERROR reçus depuis `since` (alertes de santé)."""
+        stmt = (
+            select(func.count())
+            .select_from(Signal)
+            .where(Signal.status == "ERROR", Signal.received_at >= since)
+        )
+        return await self._session.scalar(stmt) or 0
+
     async def count_by_action(
         self,
         *,

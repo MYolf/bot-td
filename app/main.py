@@ -43,10 +43,12 @@ async def lifespan(app: FastAPI):
 
     bot_task: asyncio.Task | None = None
     recap_task: asyncio.Task | None = None
+    health_task: asyncio.Task | None = None
     if settings.discord_enabled:
         from app.discord.bot import create_bot, run_bot
         from app.services.discord_service import (
             DiscordService,
+            set_health_notifier,
             set_notifier,
             set_recap_notifier,
         )
@@ -67,6 +69,11 @@ async def lifespan(app: FastAPI):
         if settings.discord_recap_channel_id is not None:
             set_recap_notifier(
                 DiscordService(bot, settings.discord_recap_channel_id)
+            )
+        # Notifieur du salon des logs : alertes de santé (base, bot, moteur).
+        if settings.discord_logs_channel_id is not None:
+            set_health_notifier(
+                DiscordService(bot, settings.discord_logs_channel_id)
             )
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
@@ -105,8 +112,40 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Démarrage du récap hebdomadaire en tâche de fond")
 
+    # --- Alertes de santé (salon logs, périodiques) ---
+    if settings.discord_enabled and settings.health_enabled:
+        from app.services.discord_service import provide_health_notifier
+        from app.services.health_monitor import HealthAlertService
+
+        health_notifier = provide_health_notifier()
+        if health_notifier is None:
+            logger.warning(
+                "Alertes de santé activées mais DISCORD_LOGS_CHANNEL_ID non configuré (désactivées)"
+            )
+        else:
+            health_task = asyncio.create_task(
+                HealthAlertService(
+                    get_session_factory(),
+                    health_notifier,
+                    bot,
+                    interval_seconds=settings.health_interval_seconds,
+                    engine_max_silence_seconds=settings.health_engine_max_silence_seconds,
+                    error_window_seconds=settings.health_error_window_seconds,
+                    error_max=settings.health_error_max,
+                ).run(),
+                name="health-monitor",
+            )
+            logger.info("Démarrage des contrôles de santé en tâche de fond")
+
     yield
 
+    if health_task is not None:
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Contrôles de santé arrêtés")
     if recap_task is not None:
         recap_task.cancel()
         try:
@@ -123,10 +162,15 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("Bot Discord arrêté")
-    from app.services.discord_service import set_notifier, set_recap_notifier
+    from app.services.discord_service import (
+        set_health_notifier,
+        set_notifier,
+        set_recap_notifier,
+    )
 
     set_notifier(None)
     set_recap_notifier(None)
+    set_health_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 

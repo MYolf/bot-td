@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     recap_hour: int = Field(default=22, alias="RECAP_HOUR")
     recap_timezone: str = Field(default="Europe/Paris", alias="RECAP_TIMEZONE")
 
+    # --- Alertes de santé (salon DISCORD_LOGS_CHANNEL_ID) ---
+    health_enabled: bool = Field(default=True, alias="HEALTH_ENABLED")
+    # Période entre deux cycles de contrôle (secondes).
+    health_interval_seconds: int = Field(default=300, alias="HEALTH_INTERVAL_SECONDS")
+    # Silence maximum du moteur (aucune bougie via /internal/prices) avant
+    # alerte : au moins deux fois le plus grand timeframe suivi.
+    health_engine_max_silence_seconds: int = Field(
+        default=1800, alias="HEALTH_ENGINE_MAX_SILENCE_SECONDS"
+    )
+    # Cascade d'erreurs : fenêtre glissante et seuil d'alerte.
+    health_error_window_seconds: int = Field(default=3600, alias="HEALTH_ERROR_WINDOW_SECONDS")
+    health_error_max: int = Field(default=3, alias="HEALTH_ERROR_MAX")
+
     # --- Webhook TradingView ---
     tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")
 
