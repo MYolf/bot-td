@@ -127,16 +127,15 @@ def build_signal_embed(
         value=_as_utc(signal_time).strftime("%H:%M:%S UTC"),
         inline=True,
     )
-    # Sorties partielles suggérées (scale-out 1/3) + break-even : le risque
-    # initial (entry - SL) définit TP1/TP2/TP3 ; après TP1, remonter le SL sur
-    # l'entrée sécurise le trade. Décision de gestion humaine, aucun ordre.
+    # Sorties partielles suggérées (scale-out 1/3) : le risque initial
+    # (entry - SL) définit TP1/TP2/TP3. Décision de gestion humaine, aucun ordre.
     tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
     embed.add_field(
         name="Sorties partielles (suggestion)",
         value=(
-            f"TP1 {format_price(tp1)} (+1R) · TP2 {format_price(tp2)} (+2R) · "
-            f"TP3 {format_price(tp3)} (+3R)\n"
-            f"Break-even : après TP1, SL → {format_price(entry_price)}"
+            f"TP1 : {format_price(tp1)} (+1R)\n"
+            f"TP2 : {format_price(tp2)} (+2R)\n"
+            f"TP3 : {format_price(tp3)} (+3R)"
         ),
         inline=False,
     )

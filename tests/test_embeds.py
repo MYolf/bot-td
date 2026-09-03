@@ -89,20 +89,19 @@ class TestEmbed:
         embed = _embed("BUY")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
-        assert "TP1 105,264.84 (+1R)" in partielles
-        assert "TP2 105,997.26 (+2R)" in partielles
-        assert "TP3 106,729.68 (+3R)" in partielles
-        # Break-even = remonter le SL sur l'entrée après TP1.
-        assert "Break-even : après TP1, SL → 104,532.42" in partielles
+        # Une ligne par TP ; le SL (break-even) n'est pas répété.
+        assert partielles == (
+            "TP1 : 105,264.84 (+1R)\nTP2 : 105,997.26 (+2R)\nTP3 : 106,729.68 (+3R)"
+        )
 
     def test_sorties_partielles_sell(self):
         # SELL : risque = SL - entry = 103800 - 104532.42 = 732.42 vers le bas.
         embed = _embed("SELL")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
-        assert "TP1 103,800 (+1R)" in partielles
-        assert "TP2 103,067.58 (+2R)" in partielles
-        assert "TP3 102,335.16 (+3R)" in partielles
+        assert partielles == (
+            "TP1 : 103,800 (+1R)\nTP2 : 103,067.58 (+2R)\nTP3 : 102,335.16 (+3R)"
+        )
 
 
 class TestScaledTargets:
