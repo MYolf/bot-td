@@ -77,7 +77,7 @@ def scaled_targets(
     action: str,
     entry_price: Decimal | float | str,
     stop_loss: Decimal | float | str,
-    multiples: tuple[int, ...] = (1, 2, 3),
+    multiples: tuple[float, ...] = (1, 2, 3),
 ) -> tuple[Decimal, ...]:
     """Niveaux de sortie partielle dérivés du bracket : entry ± n × risque.
 
@@ -128,14 +128,18 @@ def build_signal_embed(
         inline=True,
     )
     # Sorties partielles suggérées (scale-out 1/3) : le risque initial
-    # (entry - SL) définit TP1/TP2/TP3. Décision de gestion humaine, aucun ordre.
+    # (entry - SL) définit TP1/TP2/TP3. BE à +1,5R (mi-chemin TP1→TP2) :
+    # quand ce niveau est atteint, le solde est protégé au prix d'entrée.
+    # Décision de gestion humaine, aucun ordre.
     tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
+    be_trigger = scaled_targets(action, entry_price, stop_loss, multiples=(1.5,))[0]
     embed.add_field(
         name="Sorties partielles (suggestion)",
         value=(
             f"TP1 : {format_price(tp1)} (+1R)\n"
             f"TP2 : {format_price(tp2)} (+2R)\n"
-            f"TP3 : {format_price(tp3)} (+3R)"
+            f"TP3 : {format_price(tp3)} (+3R)\n"
+            f"BE : SL → entrée à {format_price(be_trigger)} (+1,5R)"
         ),
         inline=False,
     )

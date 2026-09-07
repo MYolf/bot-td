@@ -85,13 +85,14 @@ class TestEmbed:
         assert champs["Signal Time"] == "22:14:03 UTC"
 
     def test_sorties_partielles_buy(self):
-        # Risque = 104532.42 - 103800 = 732.42 -> TP1/2/3 à +1R/+2R/+3R.
+        # Risque = 104532.42 - 103800 = 732.42 -> TP1/2/3 à +1R/+2R/+3R,
+        # déclencheur BE à +1,5R (mi-chemin TP1->TP2).
         embed = _embed("BUY")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
-        # Une ligne par TP ; le SL (break-even) n'est pas répété.
         assert partielles == (
-            "TP1 : 105,264.84 (+1R)\nTP2 : 105,997.26 (+2R)\nTP3 : 106,729.68 (+3R)"
+            "TP1 : 105,264.84 (+1R)\nTP2 : 105,997.26 (+2R)\nTP3 : 106,729.68 (+3R)\n"
+            "BE : SL → entrée à 105,631.05 (+1,5R)"
         )
 
     def test_sorties_partielles_sell(self):
@@ -100,7 +101,8 @@ class TestEmbed:
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
         assert partielles == (
-            "TP1 : 103,800 (+1R)\nTP2 : 103,067.58 (+2R)\nTP3 : 102,335.16 (+3R)"
+            "TP1 : 103,800 (+1R)\nTP2 : 103,067.58 (+2R)\nTP3 : 102,335.16 (+3R)\n"
+            "BE : SL → entrée à 103,433.79 (+1,5R)"
         )
 
 
@@ -116,6 +118,11 @@ class TestScaledTargets:
     def test_multiples_configurables(self):
         tp = scaled_targets("BUY", "100", "99", multiples=(1, 3))
         assert tp == (Decimal("101"), Decimal("103"))
+
+    def test_multiple_demi(self):
+        # Déclencheur BE : +1,5R = mi-chemin entre TP1 (+1R) et TP2 (+2R).
+        tp = scaled_targets("BUY", "100", "98", multiples=(1.5,))
+        assert tp == (Decimal("103"),)
 
     def test_heure_convertie_en_utc(self):
         # 22:14:03 UTC+2 -> 20:14:03 UTC
