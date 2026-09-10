@@ -63,6 +63,22 @@ def result_in_r(exit_reason: str, risk_reward: Decimal) -> Decimal:
     return Decimal("-1")
 
 
+# Déclencheur break-even : +1,5R (mi-chemin TP1 -> TP2), même niveau que la
+# ligne BE de l'embed de signal (présentation uniquement, jamais un ordre).
+BE_TRIGGER_R = Decimal("1.5")
+
+
+def break_even_level(
+    action: str, entry_price: Decimal, stop_loss: Decimal
+) -> Decimal:
+    """Niveau de prix du déclencheur BE : entry ± 1,5 x risque."""
+    risk = (
+        entry_price - stop_loss if action == "BUY" else stop_loss - entry_price
+    )
+    sign = Decimal("1") if action == "BUY" else Decimal("-1")
+    return entry_price + sign * BE_TRIGGER_R * risk
+
+
 def resolve_exit_candle(
     action: str,
     high: Decimal,
@@ -107,6 +123,23 @@ class CloseOutcome:
     result_r: Decimal
     opened_at: datetime
     closed_at: datetime
+    sequence_number: int | None = None
+
+
+@dataclass(frozen=True)
+class BeAlert:
+    """Déclencheur break-even atteint par le prix (notification humaine).
+
+    Pure information : le paper trading garde son bracket SL/TP d'origine,
+    la gestion BE reste une décision humaine (règle absolue du projet).
+    """
+
+    position_id: int
+    sequence_number: int | None
+    symbol: str
+    action: str
+    entry_price: Decimal
+    be_trigger: Decimal
 
 
 class PaperTradingEngine:
@@ -187,6 +220,60 @@ class PaperTradingEngine:
             await session.commit()
         return outcomes
 
+    async def check_break_even(
+        self,
+        *,
+        symbol: str,
+        high: Decimal,
+        low: Decimal,
+        candle_start: datetime,
+    ) -> list[BeAlert]:
+        """Détecte le déclencheur BE (+1,5R) atteint par une bougie fermée.
+
+        Une position ne déclenche qu'UNE SEULE alerte (be_notified), même si
+        le prix repasse le niveau ensuite. Même garde anti-lookahead que
+        `check_candle` : jamais la bougie qui a créé la position. Les
+        positions clôturées (TP/SL) sont exclues d'office : si la bougie
+        touche à la fois le SL et le niveau BE, la clôture SL (prudente)
+        l'emporte et aucune alerte BE n'est émise.
+        """
+        alerts: list[BeAlert] = []
+        async with self._session_factory() as session:
+            repository = PaperRepository(session)
+            for position, signal, _strategy_name in await repository.open_with_signal_by_symbol(symbol):
+                if position.be_notified:
+                    continue
+                if _as_utc(signal.signal_timestamp) > candle_start:
+                    continue  # position ouverte à la clôture de cette même bougie
+                be_trigger = break_even_level(
+                    signal.action, signal.entry_price, signal.stop_loss
+                )
+                if signal.action == "BUY":
+                    touche = high >= be_trigger
+                else:
+                    touche = low <= be_trigger
+                if not touche:
+                    continue
+                position.be_notified = True
+                alerts.append(
+                    BeAlert(
+                        position_id=position.id,
+                        sequence_number=signal.sequence_number,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        entry_price=signal.entry_price,
+                        be_trigger=be_trigger,
+                    )
+                )
+                logger.info(
+                    "Déclencheur BE atteint position_id=%s symbol=%s niveau=%s",
+                    position.id,
+                    signal.symbol,
+                    be_trigger,
+                )
+            await session.commit()
+        return alerts
+
     async def _close(
         self,
         repository: PaperRepository,
@@ -222,6 +309,7 @@ class PaperTradingEngine:
             result_r=result_r,
             opened_at=_as_utc(position.opened_at),
             closed_at=_as_utc(position.closed_at),
+            sequence_number=signal.sequence_number,
         )
 
     async def _check_symbol(

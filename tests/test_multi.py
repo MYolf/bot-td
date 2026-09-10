@@ -201,6 +201,7 @@ def _seed_signal(
         Signal(
             id=signal_id,
             signal_uid=f"s{signal_id}:{symbol}:{timeframe}:{int(moment.timestamp())}:BUY",
+            sequence_number=signal_id,
             strategy_id=strategy_id,
             symbol=symbol,
             exchange="BINANCE",

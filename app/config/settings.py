@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     discord_recap_channel_id: int | None = Field(
         default=None, alias="DISCORD_RECAP_CHANNEL_ID"
     )
+    # Salon des rappels break-even (+1,5R atteint -> SL à l'entrée).
+    discord_be_channel_id: int | None = Field(
+        default=None, alias="DISCORD_BE_CHANNEL_ID"
+    )
 
     # --- Récap hebdomadaire du paper trading (vendredi par défaut) ---
     recap_enabled: bool = Field(default=True, alias="RECAP_ENABLED")

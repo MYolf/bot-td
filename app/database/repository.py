@@ -30,6 +30,7 @@ class InsertResult:
     duplicate: bool
     signal_id: int | None
     signal_uid: str
+    sequence_number: int | None = None
 
 
 def compute_risk_reward(signal: TradingViewSignal) -> Decimal:
@@ -100,8 +101,16 @@ class SignalRepository:
             candle_timestamp=signal.timestamp,
             action=signal.action,
         )
+        # Numéro de trade séquentiel : max + 1 (les signaux arrivent d'un seul
+        # moteur, séquentiellement ; la contrainte UNIQUE rattraperait une
+        # course en la traitant comme un doublon).
+        dernier_numero = await self._session.scalar(
+            select(func.max(Signal.sequence_number))
+        )
+        sequence_number = (dernier_numero or 0) + 1
         row = Signal(
             signal_uid=signal_uid,
+            sequence_number=sequence_number,
             strategy_id=strategy_id,
             symbol=signal.symbol,
             exchange=signal.exchange,
@@ -123,7 +132,12 @@ class SignalRepository:
             await self._session.rollback()
             logger.info("Signal dupliqué ignoré signal_uid=%s", signal_uid)
             return InsertResult(duplicate=True, signal_id=None, signal_uid=signal_uid)
-        return InsertResult(duplicate=False, signal_id=row.id, signal_uid=signal_uid)
+        return InsertResult(
+            duplicate=False,
+            signal_id=row.id,
+            signal_uid=signal_uid,
+            sequence_number=sequence_number,
+        )
 
     async def mark_sent(self, signal_id: int, discord_message_id: int) -> None:
         """Passe le signal à SENT et stocke l'identifiant du message Discord."""

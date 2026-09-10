@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
         from app.discord.bot import create_bot, run_bot
         from app.services.discord_service import (
             DiscordService,
+            set_be_notifier,
             set_health_notifier,
             set_notifier,
             set_recap_notifier,
@@ -75,6 +76,9 @@ async def lifespan(app: FastAPI):
             set_health_notifier(
                 DiscordService(bot, settings.discord_logs_channel_id)
             )
+        # Notifieur du salon BE : rappels break-even (+1,5R atteint).
+        if settings.discord_be_channel_id is not None:
+            set_be_notifier(DiscordService(bot, settings.discord_be_channel_id))
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
@@ -163,6 +167,7 @@ async def lifespan(app: FastAPI):
             pass
         logger.info("Bot Discord arrêté")
     from app.services.discord_service import (
+        set_be_notifier,
         set_health_notifier,
         set_notifier,
         set_recap_notifier,
@@ -171,6 +176,7 @@ async def lifespan(app: FastAPI):
     set_notifier(None)
     set_recap_notifier(None)
     set_health_notifier(None)
+    set_be_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 

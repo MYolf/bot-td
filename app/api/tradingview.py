@@ -152,6 +152,7 @@ async def receive_tradingview_signal(
         risk_reward=compute_risk_reward(signal),
         signal_time=signal.timestamp,
         score=compute_score(signal),
+        trade_number=insert.sequence_number,
     )
     try:
         message_id = await notifier.send_signal(embed)

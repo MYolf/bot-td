@@ -103,17 +103,21 @@ def build_signal_embed(
     risk_reward: Decimal | float | str,
     signal_time: datetime,
     score: int | None = None,
+    trade_number: int | None = None,
 ) -> discord.Embed:
     """Construit l'embed d'un signal validé (BUY/SELL).
 
     `score` (Phase 26) : qualité interne du signal sur 100, affichée
     uniquement si la stratégie en envoie les composantes.
+    `trade_number` : numéro séquentiel du trade (#16), affiché s'il est connu.
     """
     is_buy = action == "BUY"
     embed = discord.Embed(
         title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
         color=GREEN if is_buy else RED,
     )
+    if trade_number is not None:
+        embed.add_field(name="Trade", value=f"#{trade_number}", inline=True)
     embed.add_field(name="Strategy", value=strategy_label(strategy), inline=True)
     embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
     embed.add_field(name="Entry", value=format_price(entry_price), inline=True)
@@ -174,6 +178,7 @@ def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
         risk_reward=signal.risk_reward,
         signal_time=signal.signal_timestamp,
         score=signal.score,
+        trade_number=signal.sequence_number,
     )
 
 
@@ -189,7 +194,8 @@ def build_signals_list_embed(rows: list) -> discord.Embed:
         emoji = "🟢" if signal.action == "BUY" else "🔴"
         moment = _as_utc(signal.signal_timestamp).strftime("%d/%m %H:%M UTC")
         lines.append(
-            f"{emoji} **{signal.symbol}** · {strategy_label(strategy_name)} "
+            f"{emoji} #{signal.sequence_number} **{signal.symbol}** · "
+            f"{strategy_label(strategy_name)} "
             f"· {timeframe_label(signal.timeframe)} · {moment} · {signal.status}"
         )
     embed.description = "\n".join(lines)
@@ -327,6 +333,36 @@ def build_health_alert_embed(*, component: str, detail: str, resolved: bool) -> 
     return embed
 
 
+def build_be_alert_embed(alert) -> discord.Embed:
+    """Embed d'un déclencheur break-even atteint (salon dédié signal-be).
+
+    `alert` : `app.paper_trading.engine.BeAlert`. Rappel de gestion humaine :
+    au niveau +1,5R, le solde de la position peut être protégé au prix
+    d'entrée. Pure information, aucun ordre (règle absolue du projet).
+    """
+    numero = f"Trade #{alert.sequence_number}" if alert.sequence_number is not None else alert.symbol
+    embed = discord.Embed(
+        title=f"🛡️ Break-even atteint — {numero}",
+        color=0xF1C40F,  # jaune : action de gestion, ni gain ni perte
+    )
+    embed.add_field(name="Symbole", value=alert.symbol, inline=True)
+    embed.add_field(
+        name="Position", value="LONG 🟢" if alert.action == "BUY" else "SHORT 🔴", inline=True
+    )
+    embed.add_field(
+        name="Déclencheur (+1,5R)", value=format_price(alert.be_trigger), inline=True
+    )
+    embed.add_field(
+        name="Action suggérée",
+        value=f"SL → entrée ({format_price(alert.entry_price)})",
+        inline=True,
+    )
+    embed.set_footer(
+        text="Rappel de gestion — décision humaine, aucun ordre automatique"
+    )
+    return embed
+
+
 def build_closure_embed(outcome) -> discord.Embed:
     """Embed d'une position paper clôturée (TP ou SL détecté à la bougie).
 
@@ -339,6 +375,8 @@ def build_closure_embed(outcome) -> discord.Embed:
         title=f"{titre} — {outcome.symbol}",
         color=GREEN if is_tp else RED,
     )
+    if outcome.sequence_number is not None:
+        embed.add_field(name="Trade", value=f"#{outcome.sequence_number}", inline=True)
     embed.add_field(name="Position", value="LONG 🟢" if is_buy else "SHORT 🔴", inline=True)
     embed.add_field(name="Strategy", value=strategy_label(outcome.strategy), inline=True)
     embed.add_field(name="Entry", value=format_price(outcome.entry_price), inline=True)
@@ -386,7 +424,8 @@ def build_weekly_recap_embed(
     )
 
     lignes_ouvertes = [
-        f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
+        f"{'🟢' if signal.action == 'BUY' else '🔴'} #{signal.sequence_number} "
+        f"**{signal.symbol}** "
         f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
         f"{strategy_label(strategy_name)} · entry {format_price(signal.entry_price)} · "
         f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)} · "
@@ -404,7 +443,8 @@ def build_weekly_recap_embed(
         gagnant = trade.exit_reason == "TP"
         signe = "+" if _position.result_r > 0 else ""
         lignes_cloturees.append(
-            f"{'✅' if gagnant else '❌'} **{signal.symbol}** "
+            f"{'✅' if gagnant else '❌'} #{signal.sequence_number} "
+            f"**{signal.symbol}** "
             f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
             f"{'TP' if gagnant else 'SL'} @ {format_price(trade.exit_price)} · "
             f"{signe}{_position.result_r.normalize()} R · "
@@ -417,7 +457,8 @@ def build_weekly_recap_embed(
     )
 
     lignes_cours = [
-        f"{'🟢' if signal.action == 'BUY' else '🔴'} **{signal.symbol}** "
+        f"{'🟢' if signal.action == 'BUY' else '🔴'} #{signal.sequence_number} "
+        f"**{signal.symbol}** "
         f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
         f"depuis le {format_day_time(position.opened_at)} · "
         f"entry {format_price(signal.entry_price)} · "

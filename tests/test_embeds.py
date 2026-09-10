@@ -237,3 +237,78 @@ class TestStatsEmbed:
         embed = self._embed(paper=compute_stats([Decimal("2")]))
         champs = {f.name: f.value for f in embed.fields}
         assert "Profit factor : —" in champs["Paper trading (R)"]
+
+
+class TestNumeroDeTrade:
+    def test_champ_trade_affiche(self):
+        embed = build_signal_embed(
+            action="BUY",
+            symbol="BTCUSDT",
+            strategy="momentum_v1",
+            timeframe="15",
+            entry_price="100",
+            stop_loss="98",
+            take_profit="104",
+            risk_reward="2",
+            signal_time=datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc),
+            trade_number=16,
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Trade"] == "#16"
+
+    def test_sans_numero_pas_de_champ(self):
+        embed = _embed()
+        assert "Trade" not in {f.name for f in embed.fields}
+
+    def test_champ_trade_embed_de_cloture(self):
+        outcome = CloseOutcome(
+            position_id=1,
+            signal_id=2,
+            symbol="BTCUSDT",
+            strategy="momentum_v1",
+            action="BUY",
+            entry_price=Decimal("100"),
+            stop_loss=Decimal("98"),
+            take_profit=Decimal("104"),
+            risk_reward=Decimal("2"),
+            exit_reason="TP",
+            exit_price=Decimal("104"),
+            result_r=Decimal("2"),
+            opened_at=datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+            closed_at=datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc),
+            sequence_number=16,
+        )
+        champs = {f.name: f.value for f in build_closure_embed(outcome).fields}
+        assert champs["Trade"] == "#16"
+
+
+class TestBeAlertEmbed:
+    def _alert(self, sequence_number=16):
+        from app.paper_trading.engine import BeAlert
+
+        return BeAlert(
+            position_id=7,
+            sequence_number=sequence_number,
+            symbol="BTCUSDT",
+            action="BUY",
+            entry_price=Decimal("100"),
+            be_trigger=Decimal("103"),
+        )
+
+    def test_titre_et_champs(self):
+        from app.discord.embeds import build_be_alert_embed
+
+        embed = build_be_alert_embed(self._alert())
+        assert embed.title == "🛡️ Break-even atteint — Trade #16"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Symbole"] == "BTCUSDT"
+        assert champs["Position"] == "LONG 🟢"
+        assert champs["Déclencheur (+1,5R)"] == "103"
+        assert champs["Action suggérée"] == "SL → entrée (100)"
+        assert "aucun ordre" in embed.footer.text
+
+    def test_sans_numero_symbole_en_titre(self):
+        from app.discord.embeds import build_be_alert_embed
+
+        embed = build_be_alert_embed(self._alert(sequence_number=None))
+        assert embed.title == "🛡️ Break-even atteint — BTCUSDT"

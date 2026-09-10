@@ -77,9 +77,14 @@ def _seed(client) -> None:
             session.add(strategy)
             await session.flush()
 
+            compteur = 0
+
             def signal(symbol: str, action: str, ts: datetime) -> Signal:
+                nonlocal compteur
+                compteur += 1
                 return Signal(
                     signal_uid=f"momentum_v1:{symbol}:15:{ts.isoformat()}:{action}",
+                    sequence_number=compteur,
                     strategy_id=strategy.id,
                     symbol=symbol,
                     exchange="BINANCE",
@@ -240,6 +245,11 @@ class TestEmbedRecap:
         assert "SOLUSDT" in texte["⏳ En cours (2)"]
         assert "depuis le samedi 22/08 20:00" in texte["⏳ En cours (2)"]
         assert "UTC" not in texte["⏳ En cours (2)"]
+
+        # Numéro de trade sur chaque ligne (ordre de création : BTC #1, ETH #2).
+        assert "#1 **BTCUSDT**" in texte["📈 Nouvelles positions (1)"]
+        assert "#2 **ETHUSDT**" in texte["🏁 Clôturées cette semaine (1)"]
+        assert "#4 **SOLUSDT**" in texte["⏳ En cours (2)"]
 
         # Bilan enrichi : 1 trade TP (+2 R), PF indéfini (aucune perte).
         bilan = texte["Résultat de la semaine"]

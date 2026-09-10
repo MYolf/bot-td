@@ -23,7 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config.settings import Settings, get_settings
 from app.database.database import provide_session_factory
 from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
-from app.services.discord_service import SignalNotifier, notify_closure, provide_recap_notifier
+from app.services.discord_service import (
+    SignalNotifier,
+    notify_be,
+    notify_closure,
+    provide_be_notifier,
+    provide_recap_notifier,
+)
 from app.services.health_monitor import record_price_update
 
 logger = logging.getLogger(__name__)
@@ -58,6 +64,7 @@ async def receive_price_update(
     ],
     paper_engine: Annotated[PaperTradingEngine | None, Depends(provide_paper_engine)],
     recap_notifier: Annotated[SignalNotifier | None, Depends(provide_recap_notifier)],
+    be_notifier: Annotated[SignalNotifier | None, Depends(provide_be_notifier)],
 ) -> dict:
     logger.info(
         "Price update received symbol=%s timeframe=%s open_time=%s",
@@ -101,5 +108,24 @@ async def receive_price_update(
 
     for outcome in closed:
         await notify_closure(outcome, recap_notifier)
+
+    # Rappels break-even (+1,5R) : best-effort, après les clôtures (une
+    # position clôturée à cette même bougie ne déclenche pas d'alerte BE).
+    try:
+        be_alerts = await paper_engine.check_break_even(
+            symbol=update.symbol,
+            high=Decimal(str(update.high)),
+            low=Decimal(str(update.low)),
+            candle_start=candle_start,
+        )
+    except Exception:
+        logger.exception(
+            "Vérification break-even échouée symbol=%s open_time=%s (ignoré)",
+            update.symbol,
+            update.open_time,
+        )
+        be_alerts = []
+    for alert in be_alerts:
+        await notify_be(alert, be_notifier)
 
     return {"status": "ok", "closed": len(closed)}

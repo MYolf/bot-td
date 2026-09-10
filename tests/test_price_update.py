@@ -286,3 +286,132 @@ class TestNotificationCloture:
 
         assert response.status_code == 200
         assert response.json()["closed"] == 1  # clôture en base malgré Discord KO
+
+
+class TestAlertesBreakEven:
+    """Rappels BE (+1,5R) : BUY entry 100 / SL 98 -> déclencheur 103."""
+
+    def test_be_atteint_notifie_une_seule_fois(self, client):
+        from app.services.discord_service import provide_be_notifier
+
+        fake_be = FakeNotifier()
+        client.app.dependency_overrides[provide_be_notifier] = lambda: fake_be
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            bougie = _ms(signal_ts + timedelta(minutes=1))
+            # High 103.5 >= 103 (déclencheur), sans toucher TP 104 ni SL 98.
+            client.post(
+                "/internal/prices",
+                json=_price_payload(high=103.5, low=99.0, open_time_ms=bougie),
+            )
+            # Le prix reste au-dessus à la bougie suivante : pas de spam.
+            client.post(
+                "/internal/prices",
+                json=_price_payload(high=103.9, low=99.0, open_time_ms=bougie + 90_000),
+            )
+        finally:
+            client.app.dependency_overrides.pop(provide_be_notifier, None)
+
+        assert len(fake_be.sent) == 1
+        embed = fake_be.sent[0]
+        assert embed.title == "🛡️ Break-even atteint — Trade #1"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Déclencheur (+1,5R)"] == "103"
+        assert champs["Action suggérée"] == "SL → entrée (100)"
+        # La position reste ouverte : le paper trading garde son bracket.
+        (position,) = _positions(client)
+        assert position.status == "OPEN"
+        assert position.be_notified is True
+
+    def test_bougie_du_signal_pas_d_alerte(self, client):
+        """Anti-lookahead : la bougie qui clôt le signal ne déclenche pas BE."""
+        from app.services.discord_service import provide_be_notifier
+
+        fake_be = FakeNotifier()
+        client.app.dependency_overrides[provide_be_notifier] = lambda: fake_be
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            meme_bougie = _ms(signal_ts - timedelta(seconds=1))
+
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(high=110.0, low=99.0, open_time_ms=meme_bougie),
+            )
+        finally:
+            client.app.dependency_overrides.pop(provide_be_notifier, None)
+
+        assert response.status_code == 200
+        assert len(fake_be.sent) == 0
+        (position,) = _positions(client)
+        assert position.be_notified is False
+
+    def test_sl_et_be_meme_bougie_sl_prioritaire(self, client):
+        """Low touche le SL et high le déclencheur BE : clôture SL, pas d'alerte."""
+        from app.services.discord_service import provide_be_notifier
+
+        fake_be = FakeNotifier()
+        client.app.dependency_overrides[provide_be_notifier] = lambda: fake_be
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(
+                    high=103.5, low=97.5, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+                ),
+            )
+        finally:
+            client.app.dependency_overrides.pop(provide_be_notifier, None)
+
+        assert response.json()["closed"] == 1
+        (trade,) = _trades(client)
+        assert trade.exit_reason == "SL"
+        assert len(fake_be.sent) == 0
+
+    def test_sell_be_atteint_par_le_low(self, client):
+        """SELL entry 100 / SL 102 -> déclencheur BE = 97 (risque 2 vers le bas)."""
+        from app.services.discord_service import provide_be_notifier
+
+        fake_be = FakeNotifier()
+        client.app.dependency_overrides[provide_be_notifier] = lambda: fake_be
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post(
+                "/webhook/tradingview",
+                json=_signal_payload(
+                    action="SELL", stop_loss="102", take_profit="96", timestamp=signal_ts
+                ),
+            )
+
+            client.post(
+                "/internal/prices",
+                json=_price_payload(
+                    high=101.0, low=96.8, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+                ),
+            )
+        finally:
+            client.app.dependency_overrides.pop(provide_be_notifier, None)
+
+        assert len(fake_be.sent) == 1
+        champs = {f.name: f.value for f in fake_be.sent[0].fields}
+        assert champs["Déclencheur (+1,5R)"] == "97"
+
+    def test_salon_non_configure_pas_d_erreur(self, client):
+        """Sans override du notifieur BE (None par défaut) : détection quand même."""
+        signal_ts = datetime.now(timezone.utc)
+        client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+
+        response = client.post(
+            "/internal/prices",
+            json=_price_payload(
+                high=103.5, low=99.0, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+            ),
+        )
+
+        assert response.status_code == 200
+        (position,) = _positions(client)
+        assert position.status == "OPEN"
+        assert position.be_notified is True  # marqué, la notif est simplement ignorée

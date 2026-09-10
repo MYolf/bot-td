@@ -104,6 +104,7 @@ def _insert_signals(client, statuses: list[tuple[str, datetime]]) -> None:
                 session.add(
                     Signal(
                         signal_uid=f"momentum_v1:BTCUSDT:15:{index}:{status}",
+                        sequence_number=index + 1,
                         strategy_id=strategy.id,
                         symbol="BTCUSDT",
                         exchange="BINANCE",

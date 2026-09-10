@@ -83,3 +83,39 @@ class TestPipelineNotification:
         assert response.json()["status"] == "rejected"
         assert len(client.notifier.sent) == 0
         assert _signals(client) == []
+
+
+class TestNumerotation:
+    """Numéro de trade séquentiel : 1, 2, 3... en base et dans les embeds."""
+
+    def test_numeros_sequentiels_en_base_et_embeds(self, client):
+        from datetime import timedelta
+
+        premier = client.post("/webhook/tradingview", json=_payload())
+        payload_2 = _payload()
+        payload_2["timestamp"] = (
+            datetime.now(timezone.utc) + timedelta(seconds=30)
+        ).isoformat()
+        payload_2["action"] = "SELL"
+        payload_2["stop_loss"] = "105200.00"
+        payload_2["take_profit"] = "103200.00"
+        second = client.post("/webhook/tradingview", json=payload_2)
+
+        assert premier.json()["status"] == "sent"
+        assert second.json()["status"] == "sent"
+        numeros = [s.sequence_number for s in _signals(client)]
+        assert sorted(numeros) == [1, 2]
+        # Les embeds portent le numéro du trade.
+        champs_1 = {f.name: f.value for f in client.notifier.sent[0].fields}
+        champs_2 = {f.name: f.value for f in client.notifier.sent[1].fields}
+        assert champs_1["Trade"] == "#1"
+        assert champs_2["Trade"] == "#2"
+
+    def test_doublon_ne_consomme_pas_de_numero(self, client):
+        payload = _payload()
+        client.post("/webhook/tradingview", json=payload)
+        second = client.post("/webhook/tradingview", json=payload)
+
+        assert second.json()["status"] == "duplicate"
+        (signal,) = _signals(client)
+        assert signal.sequence_number == 1

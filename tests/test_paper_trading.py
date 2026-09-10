@@ -335,3 +335,17 @@ class TestFiabilite:
         assert len(client.notifier.sent) == 1
         assert any("Paper trading échoué" in r.message for r in caplog.records)
         assert _positions(client) == []
+
+
+class TestBreakEvenLevel:
+    """Déclencheur BE : entry ± 1,5 x risque (même niveau que l'embed de signal)."""
+
+    def test_buy(self):
+        from app.paper_trading.engine import break_even_level
+
+        assert break_even_level("BUY", Decimal("100"), Decimal("98")) == Decimal("103")
+
+    def test_sell(self):
+        from app.paper_trading.engine import break_even_level
+
+        assert break_even_level("SELL", Decimal("100"), Decimal("102")) == Decimal("97")

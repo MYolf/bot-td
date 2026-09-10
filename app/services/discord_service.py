@@ -66,6 +66,8 @@ _notifier: SignalNotifier | None = None
 _recap_notifier: SignalNotifier | None = None
 # Notifieur du salon des logs (alertes de santé) : None = salon non configuré.
 _health_notifier: SignalNotifier | None = None
+# Notifieur du salon BE (rappels break-even) : None = salon non configuré.
+_be_notifier: SignalNotifier | None = None
 
 
 def set_notifier(notifier: SignalNotifier | None) -> None:
@@ -103,6 +105,17 @@ def provide_health_notifier() -> SignalNotifier | None:
     return _health_notifier
 
 
+def set_be_notifier(notifier: SignalNotifier | None) -> None:
+    """Enregistre le notifieur du salon BE (None = désactivé)."""
+    global _be_notifier
+    _be_notifier = notifier
+
+
+def provide_be_notifier() -> SignalNotifier | None:
+    """Dépendance : notifieur du salon BE (None si non configuré)."""
+    return _be_notifier
+
+
 async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:
     """Publie l'embed de clôture d'une position paper dans le salon récap.
 
@@ -120,4 +133,24 @@ async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:
             "Notification de clôture échouée position_id=%s symbol=%s (ignoré)",
             outcome.position_id,
             outcome.symbol,
+        )
+
+
+async def notify_be(alert, notifier: SignalNotifier | None) -> None:
+    """Publie le rappel break-even dans le salon dédié (best-effort).
+
+    Un échec d'envoi est loggé : le drapeau be_notified reste positionné en
+    base, la gestion BE étant humaine de toute façon.
+    """
+    if notifier is None:
+        return
+    from app.discord.embeds import build_be_alert_embed
+
+    try:
+        await notifier.send_signal(build_be_alert_embed(alert))
+    except DiscordSendError:
+        logger.error(
+            "Notification BE échouée position_id=%s symbol=%s (ignoré)",
+            alert.position_id,
+            alert.symbol,
         )

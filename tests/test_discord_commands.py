@@ -64,6 +64,7 @@ def _signal(
     return Signal(
         id=signal_id,
         signal_uid=f"momentum_v1:{symbol}:15:{int(moment.timestamp())}:{action}",
+        sequence_number=signal_id,
         strategy_id=strategy_id,
         symbol=symbol,
         exchange="BINANCE",

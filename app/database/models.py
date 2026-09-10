@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     SmallInteger,
     String,
@@ -56,6 +57,9 @@ class Signal(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Numéro de trade séquentiel, unique : attribué à l'insertion (max + 1),
+    # les lignes historiques étant backfillées par ordre d'arrivée.
+    sequence_number: Mapped[int] = mapped_column(Integer, unique=True)
     # Cœur de la déduplication (Phase 10) : contrainte UNIQUE en base.
     signal_uid: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     strategy_id: Mapped[int] = mapped_column(
@@ -101,6 +105,9 @@ class PaperPosition(Base):
         DateTime(timezone=True), nullable=True
     )
     result_r: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    # Alerte break-even déjà envoyée pour cette position (anti-spam : le prix
+    # peut repasser le niveau +1,5R plusieurs fois, une seule notification).
+    be_notified: Mapped[bool] = mapped_column(default=False)
 
 
 class PaperTrade(Base):
