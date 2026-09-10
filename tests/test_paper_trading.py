@@ -349,3 +349,19 @@ class TestBreakEvenLevel:
         from app.paper_trading.engine import break_even_level
 
         assert break_even_level("SELL", Decimal("100"), Decimal("102")) == Decimal("97")
+
+
+class TestPartialTpLevel:
+    """Sorties partielles : entry ± n x risque (TP1 = +1R, TP2 = +2R)."""
+
+    def test_buy(self):
+        from app.paper_trading.engine import partial_tp_level
+
+        assert partial_tp_level("BUY", Decimal("100"), Decimal("98"), 1) == Decimal("102")
+        assert partial_tp_level("BUY", Decimal("100"), Decimal("98"), 2) == Decimal("104")
+
+    def test_sell(self):
+        from app.paper_trading.engine import partial_tp_level
+
+        assert partial_tp_level("SELL", Decimal("100"), Decimal("102"), 1) == Decimal("98")
+        assert partial_tp_level("SELL", Decimal("100"), Decimal("102"), 2) == Decimal("96")

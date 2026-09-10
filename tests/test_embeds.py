@@ -312,3 +312,51 @@ class TestBeAlertEmbed:
 
         embed = build_be_alert_embed(self._alert(sequence_number=None))
         assert embed.title == "🛡️ Break-even atteint — BTCUSDT"
+
+
+class TestTpProgressEmbed:
+    def _alert(self, level=1, niveaux=None):
+        from app.paper_trading.engine import TpAlert
+
+        return TpAlert(
+            position_id=7,
+            sequence_number=12,
+            symbol="BTCUSDT",
+            action="BUY",
+            level=level,
+            level_price=Decimal("102"),
+            niveaux=niveaux
+            or ((1, Decimal("102"), True), (2, Decimal("104"), False)),
+        )
+
+    def test_titre_et_etat_des_tp(self):
+        from app.discord.embeds import build_tp_progress_embed
+
+        embed = build_tp_progress_embed(self._alert())
+        assert embed.title == "✅ TP1 validé — Trade #12"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Symbole"] == "BTCUSDT"
+        assert champs["Position"] == "LONG 🟢"
+        assert champs["Take Profits"] == "TP1 : ✅ validé (102)\nTP2 : ⏳ en cours (104)"
+        assert "aucun ordre" in embed.footer.text
+
+    def test_tp2_avec_les_deux_valides(self):
+        from app.discord.embeds import build_tp_progress_embed
+
+        alert = self._alert(
+            level=2,
+            niveaux=((1, Decimal("102"), True), (2, Decimal("104"), True)),
+        )
+        embed = build_tp_progress_embed(alert)
+        assert embed.title == "✅ TP2 validé — Trade #12"
+        champs = {f.name: f.value for f in embed.fields}
+        assert "TP1 : ✅ validé (102)" in champs["Take Profits"]
+        assert "TP2 : ✅ validé (104)" in champs["Take Profits"]
+
+    def test_sans_numero_symbole_en_titre(self):
+        from app.discord.embeds import build_tp_progress_embed
+
+        alert = self._alert()
+        object.__setattr__(alert, "sequence_number", None)
+        embed = build_tp_progress_embed(alert)
+        assert embed.title == "✅ TP1 validé — BTCUSDT"

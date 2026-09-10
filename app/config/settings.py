@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     discord_be_channel_id: int | None = Field(
         default=None, alias="DISCORD_BE_CHANNEL_ID"
     )
+    # Salon des clôtures SL (le salon récap ne reçoit que le récap hebdo).
+    discord_sl_channel_id: int | None = Field(
+        default=None, alias="DISCORD_SL_CHANNEL_ID"
+    )
+    # Salon des clôtures TP + rappels de sorties partielles TP1/TP2.
+    discord_tp_channel_id: int | None = Field(
+        default=None, alias="DISCORD_TP_CHANNEL_ID"
+    )
 
     # --- Récap hebdomadaire du paper trading (vendredi par défaut) ---
     recap_enabled: bool = Field(default=True, alias="RECAP_ENABLED")

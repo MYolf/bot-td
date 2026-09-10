@@ -67,16 +67,27 @@ def result_in_r(exit_reason: str, risk_reward: Decimal) -> Decimal:
 # ligne BE de l'embed de signal (présentation uniquement, jamais un ordre).
 BE_TRIGGER_R = Decimal("1.5")
 
+# Sorties partielles suivies : TP1 (+1R) et TP2 (+2R). TP2 coïncide avec le
+# TP du signal (RR = 2) : son rappel part sur la bougie de clôture.
+TP_MULTIPLES = (1, 2)
+
 
 def break_even_level(
     action: str, entry_price: Decimal, stop_loss: Decimal
 ) -> Decimal:
     """Niveau de prix du déclencheur BE : entry ± 1,5 x risque."""
+    return partial_tp_level(action, entry_price, stop_loss, BE_TRIGGER_R)
+
+
+def partial_tp_level(
+    action: str, entry_price: Decimal, stop_loss: Decimal, multiple: Decimal | int
+) -> Decimal:
+    """Niveau de sortie partielle : entry ± multiple x risque (1 -> TP1...)."""
     risk = (
         entry_price - stop_loss if action == "BUY" else stop_loss - entry_price
     )
     sign = Decimal("1") if action == "BUY" else Decimal("-1")
-    return entry_price + sign * BE_TRIGGER_R * risk
+    return entry_price + sign * Decimal(multiple) * risk
 
 
 def resolve_exit_candle(
@@ -140,6 +151,25 @@ class BeAlert:
     action: str
     entry_price: Decimal
     be_trigger: Decimal
+
+
+@dataclass(frozen=True)
+class TpAlert:
+    """Sortie partielle TP1/TP2 atteinte par le prix (notification humaine).
+
+    Rappel de gestion (scale-out) : le paper trading garde son bracket
+    SL/TP d'origine, la sortie partielle reste une décision humaine.
+    `niveaux` : état des TP connus au moment de l'alerte, pour l'embed
+    (numéro du TP, prix, déjà validé ou non).
+    """
+
+    position_id: int
+    sequence_number: int | None
+    symbol: str
+    action: str
+    level: int
+    level_price: Decimal
+    niveaux: tuple[tuple[int, Decimal, bool], ...]
 
 
 class PaperTradingEngine:
@@ -219,6 +249,83 @@ class PaperTradingEngine:
                 )
             await session.commit()
         return outcomes
+
+    async def check_take_profits(
+        self,
+        *,
+        symbol: str,
+        high: Decimal,
+        low: Decimal,
+        candle_start: datetime,
+    ) -> list[TpAlert]:
+        """Détecte TP1 (+1R) puis TP2 (+2R) atteints par une bougie fermée.
+
+        Chaque niveau est rappelé UNE seule fois, tant que la position est
+        ouverte (TP2 = TP du signal : son rappel part sur la bougie de
+        clôture, juste avant l'embed de clôture). Priorité SL prudente : si
+        la bougie touche aussi le stop, la position est laissée à la
+        clôture SL et aucun rappel TP n'est émis. Même garde anti-lookahead
+        que `check_candle`.
+        """
+        alerts: list[TpAlert] = []
+        async with self._session_factory() as session:
+            repository = PaperRepository(session)
+            for position, signal, _strategy_name in await repository.open_with_signal_by_symbol(symbol):
+                if _as_utc(signal.signal_timestamp) > candle_start:
+                    continue  # position ouverte à la clôture de cette même bougie
+                if signal.action == "BUY" and low <= signal.stop_loss:
+                    continue  # SL touché par cette bougie : clôture prudente
+                if signal.action == "SELL" and high >= signal.stop_loss:
+                    continue
+                for multiple in TP_MULTIPLES:
+                    if getattr(position, f"tp{multiple}_notified"):
+                        continue
+                    level_price = partial_tp_level(
+                        signal.action,
+                        signal.entry_price,
+                        signal.stop_loss,
+                        multiple,
+                    )
+                    if signal.action == "BUY":
+                        touche = high >= level_price
+                    else:
+                        touche = low <= level_price
+                    if not touche:
+                        continue
+                    setattr(position, f"tp{multiple}_notified", True)
+                    niveaux = tuple(
+                        (
+                            m,
+                            partial_tp_level(
+                                signal.action,
+                                signal.entry_price,
+                                signal.stop_loss,
+                                m,
+                            ),
+                            getattr(position, f"tp{m}_notified"),
+                        )
+                        for m in TP_MULTIPLES
+                    )
+                    alerts.append(
+                        TpAlert(
+                            position_id=position.id,
+                            sequence_number=signal.sequence_number,
+                            symbol=signal.symbol,
+                            action=signal.action,
+                            level=multiple,
+                            level_price=level_price,
+                            niveaux=niveaux,
+                        )
+                    )
+                    logger.info(
+                        "Sortie partielle TP%d atteinte position_id=%s symbol=%s niveau=%s",
+                        multiple,
+                        position.id,
+                        signal.symbol,
+                        level_price,
+                    )
+            await session.commit()
+        return alerts
 
     async def check_break_even(
         self,

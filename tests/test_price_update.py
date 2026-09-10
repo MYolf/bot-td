@@ -230,50 +230,24 @@ class TestClotureParBougie:
 
 
 class TestNotificationCloture:
-    def test_cloture_notifiee_dans_le_salon_recap(self, client):
-        fake_recap = FakeNotifier()
-        client.app.dependency_overrides[provide_recap_notifier] = lambda: fake_recap
-        try:
-            signal_ts = datetime.now(timezone.utc)
-            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
-            client.post(
-                "/internal/prices",
-                json=_price_payload(high=104.5, low=99.0, open_time_ms=_ms(signal_ts + timedelta(minutes=1))),
-            )
-        finally:
-            client.app.dependency_overrides.pop(provide_recap_notifier, None)
+    """Les clôtures sont routées : SL -> salon SL, TP -> salon TP (le salon
+    récap ne reçoit plus que le récap hebdo)."""
 
-        assert len(fake_recap.sent) == 1
-        embed = fake_recap.sent[0]
-        assert "Take Profit atteint" in embed.title
-        assert "BTCUSDT" in embed.title
-        # Jour + heure de l'ouverture et de la clôture, en heure de Paris.
-        champs = {f.name: f.value for f in embed.fields}
-        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Ouvert le"])
-        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Clôturé le"])
+    def _avec_tp_notifier(self, client):
+        from app.services.discord_service import set_tp_notifier
 
-    def test_cloture_par_signal_notifiee_aussi(self, client):
-        """Voie historique : le prix d'entrée d'un nouveau signal clôture une
-        position -> notification également publiée."""
-        fake_recap = FakeNotifier()
-        client.app.dependency_overrides[provide_recap_notifier] = lambda: fake_recap
-        try:
-            client.post("/webhook/tradingview", json=_signal_payload())
-            suivant = _signal_payload(
-                price="105", stop_loss="103", take_profit="108",
-                timestamp=datetime.now(timezone.utc) + timedelta(seconds=30),
-            )
-            client.post("/webhook/tradingview", json=suivant)
-        finally:
-            client.app.dependency_overrides.pop(provide_recap_notifier, None)
+        fake_tp = FakeNotifier()
+        set_tp_notifier(fake_tp)
+        return fake_tp
 
-        assert len(fake_recap.sent) == 1
-        assert "Take Profit atteint" in fake_recap.sent[0].title
+    def _nettoie(self):
+        from app.services.discord_service import set_tp_notifier, set_sl_notifier
 
-    def test_echec_discord_ne_casse_pas_la_cloture(self, client):
-        fake_recap = FakeNotifier()
-        fake_recap.fail = True
-        client.app.dependency_overrides[provide_recap_notifier] = lambda: fake_recap
+        set_tp_notifier(None)
+        set_sl_notifier(None)
+
+    def test_cloture_tp_notifiee_dans_le_salon_tp(self, client):
+        fake_tp = self._avec_tp_notifier(client)
         try:
             signal_ts = datetime.now(timezone.utc)
             client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
@@ -282,7 +256,71 @@ class TestNotificationCloture:
                 json=_price_payload(high=104.5, low=99.0, open_time_ms=_ms(signal_ts + timedelta(minutes=1))),
             )
         finally:
-            client.app.dependency_overrides.pop(provide_recap_notifier, None)
+            self._nettoie()
+
+        assert response.json()["closed"] == 1
+        # Bougie touchant TP2 (= TP du signal) : rappels TP1 + TP2 puis embed
+        # de clôture, tous dans le salon TP.
+        titres = [e.title for e in fake_tp.sent]
+        assert "✅ TP1 validé — Trade #1" in titres
+        assert "✅ TP2 validé — Trade #1" in titres
+        assert any("Take Profit atteint" in t for t in titres)
+        embed_cloture = fake_tp.sent[-1]
+        assert "BTCUSDT" in embed_cloture.title
+        # Jour + heure de l'ouverture et de la clôture, en heure de Paris.
+        champs = {f.name: f.value for f in embed_cloture.fields}
+        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Ouvert le"])
+        assert re.fullmatch(r"\w+ \d{2}/\d{2} \d{2}:\d{2}", champs["Clôturé le"])
+
+    def test_cloture_sl_notifiee_dans_le_salon_sl(self, client):
+        from app.services.discord_service import set_sl_notifier
+
+        fake_sl = FakeNotifier()
+        fake_tp = self._avec_tp_notifier(client)
+        set_sl_notifier(fake_sl)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(high=101.0, low=97.5, open_time_ms=_ms(signal_ts + timedelta(minutes=1))),
+            )
+        finally:
+            self._nettoie()
+
+        assert response.json()["closed"] == 1
+        assert len(fake_sl.sent) == 1
+        assert "Stop Loss atteint" in fake_sl.sent[0].title
+        assert len(fake_tp.sent) == 0  # rien côté TP
+
+    def test_cloture_par_signal_notifiee_aussi(self, client):
+        """Voie historique : le prix d'entrée d'un nouveau signal clôture une
+        position -> notification routée dans le salon TP également."""
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            client.post("/webhook/tradingview", json=_signal_payload())
+            suivant = _signal_payload(
+                price="105", stop_loss="103", take_profit="108",
+                timestamp=datetime.now(timezone.utc) + timedelta(seconds=30),
+            )
+            client.post("/webhook/tradingview", json=suivant)
+        finally:
+            self._nettoie()
+
+        assert any("Take Profit atteint" in e.title for e in fake_tp.sent)
+
+    def test_echec_discord_ne_casse_pas_la_cloture(self, client):
+        fake_tp = self._avec_tp_notifier(client)
+        fake_tp.fail = True
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(high=104.5, low=99.0, open_time_ms=_ms(signal_ts + timedelta(minutes=1))),
+            )
+        finally:
+            self._nettoie()
 
         assert response.status_code == 200
         assert response.json()["closed"] == 1  # clôture en base malgré Discord KO
@@ -415,3 +453,151 @@ class TestAlertesBreakEven:
         (position,) = _positions(client)
         assert position.status == "OPEN"
         assert position.be_notified is True  # marqué, la notif est simplement ignorée
+
+
+class TestSortiesPartielles:
+    """TP1 (+1R) / TP2 (+2R) : BUY entry 100 / SL 98 -> TP1 = 102, TP2 = 104."""
+
+    def _avec_tp_notifier(self, client):
+        from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+        fake_tp = FakeNotifier()
+        # Dépendance de route (rappels TP) ET global (routage des clôtures).
+        client.app.dependency_overrides[provide_tp_notifier] = lambda: fake_tp
+        set_tp_notifier(fake_tp)
+        return fake_tp
+
+    def test_tp1_valide_tp2_en_cours(self, client):
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            bougie = _ms(signal_ts + timedelta(minutes=1))
+            # High 102.5 touche TP1 (102), pas TP2 (104) ni le SL.
+            client.post(
+                "/internal/prices",
+                json=_price_payload(high=102.5, low=99.0, open_time_ms=bougie),
+            )
+            # Bougie suivante toujours au-dessus de TP1 : pas de spam.
+            client.post(
+                "/internal/prices",
+                json=_price_payload(high=103.0, low=99.0, open_time_ms=bougie + 90_000),
+            )
+        finally:
+            from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+            client.app.dependency_overrides.pop(provide_tp_notifier, None)
+            set_tp_notifier(None)
+
+        assert len(fake_tp.sent) == 1
+        embed = fake_tp.sent[0]
+        assert embed.title == "✅ TP1 validé — Trade #1"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Take Profits"] == (
+            "TP1 : ✅ validé (102)\nTP2 : ⏳ en cours (104)"
+        )
+        # Position toujours ouverte, drapeaux persistés.
+        (position,) = _positions(client)
+        assert position.status == "OPEN"
+        assert position.tp1_notified is True
+        assert position.tp2_notified is False
+
+    def test_tp2_valide_puis_cloture_tp(self, client):
+        """Bougie touchant TP2 (= TP du signal) : rappels TP1 + TP2 puis
+        clôture paper en TP."""
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(
+                    high=104.5, low=99.0, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+                ),
+            )
+        finally:
+            from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+            client.app.dependency_overrides.pop(provide_tp_notifier, None)
+            set_tp_notifier(None)
+
+        assert response.json()["closed"] == 1
+        titres = [e.title for e in fake_tp.sent]
+        assert titres[:2] == ["✅ TP1 validé — Trade #1", "✅ TP2 validé — Trade #1"]
+        assert "Take Profit atteint" in titres[2]
+        # Les deux niveaux affichés validés dans le rappel TP2.
+        champs = {f.name: f.value for f in fake_tp.sent[1].fields}
+        assert champs["Take Profits"] == (
+            "TP1 : ✅ validé (102)\nTP2 : ✅ validé (104)"
+        )
+
+    def test_sl_et_tp1_meme_bougie_sl_prioritaire(self, client):
+        """La bougie touche le SL et TP1 : clôture SL, aucun rappel TP."""
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            response = client.post(
+                "/internal/prices",
+                json=_price_payload(
+                    high=102.5, low=97.5, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+                ),
+            )
+        finally:
+            from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+            client.app.dependency_overrides.pop(provide_tp_notifier, None)
+            set_tp_notifier(None)
+
+        assert response.json()["closed"] == 1
+        (trade,) = _trades(client)
+        assert trade.exit_reason == "SL"
+        assert len(fake_tp.sent) == 0
+
+    def test_bougie_du_signal_pas_de_rappel(self, client):
+        """Anti-lookahead : la bougie qui clôt le signal ne déclenche pas TP1."""
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post("/webhook/tradingview", json=_signal_payload(timestamp=signal_ts))
+            meme_bougie = _ms(signal_ts - timedelta(seconds=1))
+            client.post(
+                "/internal/prices",
+                json=_price_payload(high=110.0, low=99.0, open_time_ms=meme_bougie),
+            )
+        finally:
+            from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+            client.app.dependency_overrides.pop(provide_tp_notifier, None)
+            set_tp_notifier(None)
+
+        assert len(fake_tp.sent) == 0
+        (position,) = _positions(client)
+        assert position.tp1_notified is False
+
+    def test_sell_tp1_atteint_par_le_low(self, client):
+        """SELL entry 100 / SL 102 -> TP1 = 98 (risque 2 vers le bas)."""
+        fake_tp = self._avec_tp_notifier(client)
+        try:
+            signal_ts = datetime.now(timezone.utc)
+            client.post(
+                "/webhook/tradingview",
+                json=_signal_payload(
+                    action="SELL", stop_loss="102", take_profit="96", timestamp=signal_ts
+                ),
+            )
+            client.post(
+                "/internal/prices",
+                json=_price_payload(
+                    high=101.0, low=97.5, open_time_ms=_ms(signal_ts + timedelta(minutes=1))
+                ),
+            )
+        finally:
+            from app.services.discord_service import provide_tp_notifier, set_tp_notifier
+
+            client.app.dependency_overrides.pop(provide_tp_notifier, None)
+            set_tp_notifier(None)
+
+        assert len(fake_tp.sent) == 1
+        champs = {f.name: f.value for f in fake_tp.sent[0].fields}
+        assert "TP1 : ✅ validé (98)" in champs["Take Profits"]

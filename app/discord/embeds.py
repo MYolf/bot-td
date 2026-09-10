@@ -363,6 +363,33 @@ def build_be_alert_embed(alert) -> discord.Embed:
     return embed
 
 
+def build_tp_progress_embed(alert) -> discord.Embed:
+    """Embed d'une sortie partielle TP1/TP2 validée (salon dédié TP).
+
+    `alert` : `app.paper_trading.engine.TpAlert`. Affiche l'état des TP
+    connus : validés ✅ ou en cours ⏳. Rappel de gestion humaine (scale-out),
+    aucun ordre.
+    """
+    numero = f"Trade #{alert.sequence_number}" if alert.sequence_number is not None else alert.symbol
+    embed = discord.Embed(
+        title=f"✅ TP{alert.level} validé — {numero}",
+        color=GREEN,
+    )
+    embed.add_field(name="Symbole", value=alert.symbol, inline=True)
+    embed.add_field(
+        name="Position", value="LONG 🟢" if alert.action == "BUY" else "SHORT 🔴", inline=True
+    )
+    lignes = []
+    for niveau, prix, valide in alert.niveaux:
+        etat = "✅ validé" if valide else "⏳ en cours"
+        lignes.append(f"TP{niveau} : {etat} ({format_price(prix)})")
+    embed.add_field(name="Take Profits", value="\n".join(lignes), inline=False)
+    embed.set_footer(
+        text="Sorties partielles — gestion manuelle, aucun ordre automatique"
+    )
+    return embed
+
+
 def build_closure_embed(outcome) -> discord.Embed:
     """Embed d'une position paper clôturée (TP ou SL détecté à la bougie).
 

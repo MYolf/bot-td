@@ -108,6 +108,10 @@ class PaperPosition(Base):
     # Alerte break-even déjà envoyée pour cette position (anti-spam : le prix
     # peut repasser le niveau +1,5R plusieurs fois, une seule notification).
     be_notified: Mapped[bool] = mapped_column(default=False)
+    # Sorties partielles : TP1 (+1R) et TP2 (+2R) déjà notifiés. Chaque niveau
+    # est rappelé une seule fois pendant que la position est ouverte.
+    tp1_notified: Mapped[bool] = mapped_column(default=False)
+    tp2_notified: Mapped[bool] = mapped_column(default=False)
 
 
 class PaperTrade(Base):

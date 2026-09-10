@@ -25,10 +25,12 @@ from app.database.database import provide_session_factory
 from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import (
     SignalNotifier,
+    closure_notifier,
     notify_be,
     notify_closure,
+    notify_tp_progress,
     provide_be_notifier,
-    provide_recap_notifier,
+    provide_tp_notifier,
 )
 from app.services.health_monitor import record_price_update
 
@@ -63,8 +65,8 @@ async def receive_price_update(
         async_sessionmaker[AsyncSession], Depends(provide_session_factory)
     ],
     paper_engine: Annotated[PaperTradingEngine | None, Depends(provide_paper_engine)],
-    recap_notifier: Annotated[SignalNotifier | None, Depends(provide_recap_notifier)],
     be_notifier: Annotated[SignalNotifier | None, Depends(provide_be_notifier)],
+    tp_notifier: Annotated[SignalNotifier | None, Depends(provide_tp_notifier)],
 ) -> dict:
     logger.info(
         "Price update received symbol=%s timeframe=%s open_time=%s",
@@ -90,6 +92,26 @@ async def receive_price_update(
         return {"status": "ok", "closed": 0}
 
     candle_start = datetime.fromtimestamp(update.open_time / 1000, tz=timezone.utc)
+
+    # --- Sorties partielles TP1/TP2 (avant la clôture : le TP2 = TP du
+    # signal, son rappel part sur la bougie de clôture ; SL prioritaire). ---
+    try:
+        tp_alerts = await paper_engine.check_take_profits(
+            symbol=update.symbol,
+            high=Decimal(str(update.high)),
+            low=Decimal(str(update.low)),
+            candle_start=candle_start,
+        )
+    except Exception:
+        logger.exception(
+            "Vérification sorties partielles échouée symbol=%s open_time=%s (ignoré)",
+            update.symbol,
+            update.open_time,
+        )
+        tp_alerts = []
+    for alert in tp_alerts:
+        await notify_tp_progress(alert, tp_notifier)
+
     try:
         closed = await paper_engine.check_candle(
             symbol=update.symbol,
@@ -106,8 +128,10 @@ async def receive_price_update(
         )
         return {"status": "error", "error": "check_failed"}
 
+    # Clôtures routées par raison : SL -> salon SL, TP -> salon TP (le salon
+    # récap ne reçoit plus que le récap hebdo).
     for outcome in closed:
-        await notify_closure(outcome, recap_notifier)
+        await notify_closure(outcome, closure_notifier(outcome.exit_reason))
 
     # Rappels break-even (+1,5R) : best-effort, après les clôtures (une
     # position clôturée à cette même bougie ne déclenche pas d'alerte BE).

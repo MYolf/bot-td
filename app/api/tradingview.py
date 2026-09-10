@@ -24,9 +24,9 @@ from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import (
     DiscordSendError,
     SignalNotifier,
+    closure_notifier,
     notify_closure,
     provide_notifier,
-    provide_recap_notifier,
 )
 from app.signals.scoring import compute_score
 from app.signals.schemas import TradingViewSignal
@@ -46,7 +46,6 @@ async def receive_tradingview_signal(
         async_sessionmaker[AsyncSession], Depends(provide_session_factory)
     ],
     notifier: Annotated[SignalNotifier, Depends(provide_notifier)],
-    recap_notifier: Annotated[SignalNotifier | None, Depends(provide_recap_notifier)],
     paper_engine: Annotated[PaperTradingEngine | None, Depends(provide_paper_engine)],
 ) -> dict:
     logger.info(
@@ -131,9 +130,9 @@ async def receive_tradingview_signal(
                 take_profit=Decimal(str(signal.take_profit)),
             )
             # Une position ancienne peut être clôturée par le prix de ce
-            # signal : notification dans le salon récap (best-effort).
+            # signal : notification dans le salon SL ou TP selon la sortie.
             for outcome in outcomes:
-                await notify_closure(outcome, recap_notifier)
+                await notify_closure(outcome, closure_notifier(outcome.exit_reason))
         except Exception:
             logger.exception(
                 "Paper trading échoué signal_id=%s (signal conservé, pas d'impact)",
