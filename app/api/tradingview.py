@@ -28,7 +28,7 @@ from app.services.discord_service import (
     notify_closure,
     provide_notifier,
 )
-from app.signals.scoring import compute_score
+from app.signals.scoring import compute_score, present_components
 from app.signals.schemas import TradingViewSignal
 from app.signals.validator import validate_signal
 
@@ -151,6 +151,7 @@ async def receive_tradingview_signal(
         risk_reward=compute_risk_reward(signal),
         signal_time=signal.timestamp,
         score=compute_score(signal),
+        score_components=present_components(signal),
         trade_number=insert.sequence_number,
     )
     try:

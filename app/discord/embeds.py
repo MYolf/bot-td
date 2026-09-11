@@ -6,7 +6,7 @@ Format conforme à Projet.md §22, lisible sur mobile : titre normalisé
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 import discord
@@ -16,6 +16,7 @@ from app.paper_trading.statistics import (
     compute_stats,
     paper_breakdown,
 )
+from app.signals.scoring import SCORE_COMPONENT_MAX
 
 GREEN = 0x2ECC71  # LONG
 RED = 0xE74C3C  # SHORT
@@ -50,6 +51,113 @@ def format_risk_reward(rr: Decimal | float | str) -> str:
     value = Decimal(str(rr)).quantize(Decimal("0.01")).normalize()
     text = format(value, "f")
     return f"1:{text}"
+
+
+# --- Pips : distance de prix lisible (pure présentation) ---
+
+# Taille d'un pip par symbole. Par défaut 1 unité de la paire USDT (1 $) :
+# BTC TP1 à +1R ≈ +1 000 pips, ETH ≈ +35 pips. Convention choisie par
+# l'utilisateur (2026-09-11).
+PIP_SIZES: dict[str, Decimal] = {}
+
+
+def pip_size(symbol: str) -> Decimal:
+    """Taille d'un pip pour le symbole (1 USDT par défaut)."""
+    return PIP_SIZES.get(symbol.upper(), Decimal("1"))
+
+
+def format_pips(
+    symbol: str, price_from: Decimal | float | str, price_to: Decimal | float | str
+) -> str:
+    """Distance en pips entre deux prix : « +1,048 pips » (arrondi au pip)."""
+    distance = abs(Decimal(str(price_to)) - Decimal(str(price_from))) / pip_size(symbol)
+    pips = int(distance.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return f"+{pips:,} pips"
+
+
+# --- Nombres à la française (récap hebdo, performance) ---
+
+
+def _fmt_fr(value: Decimal) -> str:
+    """Décimal lisible à la française : virgule décimale, sans exposant."""
+    return format(value.normalize(), "f").replace(".", ",")
+
+
+def format_r_fr(value: Decimal) -> str:
+    """R signé à la française : « +1R », « +0,13R », « -1R »."""
+    signe = "+" if value > 0 else ""
+    return f"{signe}{_fmt_fr(value)}R"
+
+
+# --- Setup : indicateurs derrière chaque composante du score ---
+
+# Libellés par stratégie (purement informatif, pour l'embed de signal).
+# momentum_v1 : EMA 50/200 (tendance), RSI 14 (momentum), MACD 12/26/9.
+STRATEGY_SETUPS: dict[str, dict[str, str]] = {
+    "momentum_v1": {
+        "score_trend": "Tendance — EMA 50/200",
+        "score_momentum": "Momentum — RSI 14",
+        "score_macd": "MACD 12/26/9",
+    },
+}
+
+# Libellés génériques (stratégie inconnue de la map).
+GENERIC_SETUP: dict[str, str] = {
+    "score_trend": "Tendance",
+    "score_momentum": "Momentum",
+    "score_macd": "MACD",
+    "score_volume": "Volume",
+    "score_structure": "Structure",
+    "score_htf": "Tendance HTF",
+}
+
+
+def setup_lines(
+    strategy: str, components: dict[str, int] | None
+) -> list[str]:
+    """Lignes du champ « Setup » : indicateur et points par composante.
+
+    Sans composantes (anciens signaux), liste les indicateurs de la stratégie
+    si elle est connue, sinon rien (pas de champ).
+    """
+    labels = STRATEGY_SETUPS.get(strategy, GENERIC_SETUP)
+    if components:
+        return [
+            f"{labels.get(field, GENERIC_SETUP[field])} : "
+            f"{points}/{SCORE_COMPONENT_MAX[field]}"
+            for field, points in components.items()
+        ]
+    if strategy in STRATEGY_SETUPS:
+        return list(STRATEGY_SETUPS[strategy].values())
+    return []
+
+
+def score_sur_100(score: int, components: dict[str, int] | None) -> str:
+    """Score affiché sur 100, recalibré sur le maximum des composantes envoyées.
+
+    momentum_v1 n'évalue que 55 points de barème : 45/55 s'affiche « 82/100 ».
+    Sans composantes (anciens signaux) : score brut en points, pas d'échelle
+    inventée. Le score reste un indicateur interne, pas une probabilité.
+    """
+    if components:
+        maxi = sum(SCORE_COMPONENT_MAX[field] for field in components)
+        if maxi > 0:
+            return f"{round(score * 100 / maxi)}/100"
+    return f"{score} pts"
+
+
+# --- Symboles : nom court et emoji (récap hebdo) ---
+
+SYMBOL_EMOJIS = {"BTC": "₿", "ETH": "♦️"}
+
+
+def _symbole_court(symbol: str) -> str:
+    """BTCUSDT -> BTC (les paires non USDT restent telles quelles)."""
+    return symbol[:-4] if symbol.endswith("USDT") else symbol
+
+
+def _symbol_emoji(symbol: str) -> str:
+    return SYMBOL_EMOJIS.get(_symbole_court(symbol), "🔹")
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -103,12 +211,15 @@ def build_signal_embed(
     risk_reward: Decimal | float | str,
     signal_time: datetime,
     score: int | None = None,
+    score_components: dict[str, int] | None = None,
     trade_number: int | None = None,
 ) -> discord.Embed:
     """Construit l'embed d'un signal validé (BUY/SELL).
 
-    `score` (Phase 26) : qualité interne du signal sur 100, affichée
-    uniquement si la stratégie en envoie les composantes.
+    `score` (Phase 26) : qualité interne du signal, affichée recalibrée sur
+    100 (voir `score_sur_100`) uniquement si la stratégie en envoie les
+    composantes. `score_components` : composantes présentes, pour le champ
+    « Setup » (indicateurs et points).
     `trade_number` : numéro séquentiel du trade (#16), affiché s'il est connu.
     """
     is_buy = action == "BUY"
@@ -116,21 +227,40 @@ def build_signal_embed(
         title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
         color=GREEN if is_buy else RED,
     )
+    # Ligne 1 : identité du trade.
     if trade_number is not None:
         embed.add_field(name="Trade", value=f"#{trade_number}", inline=True)
     embed.add_field(name="Strategy", value=strategy_label(strategy), inline=True)
     embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
+    # Ligne 2 : le bracket, avec la distance du TP en pips.
     embed.add_field(name="Entry", value=format_price(entry_price), inline=True)
     embed.add_field(name="Stop Loss", value=format_price(stop_loss), inline=True)
-    embed.add_field(name="Take Profit", value=format_price(take_profit), inline=True)
+    embed.add_field(
+        name="Take Profit",
+        value=(
+            f"{format_price(take_profit)}\n"
+            f"{format_pips(symbol, entry_price, take_profit)}"
+        ),
+        inline=True,
+    )
+    # Ligne 3 : métriques et horodatage.
     embed.add_field(
         name="Risk/Reward", value=format_risk_reward(risk_reward), inline=True
     )
+    score_value = (
+        score_sur_100(score, score_components) if score is not None else None
+    )
+    if score_value is not None:
+        embed.add_field(name="Signal Score", value=score_value, inline=True)
     embed.add_field(
         name="Signal Time",
         value=_as_utc(signal_time).strftime("%H:%M:%S UTC"),
         inline=True,
     )
+    # Setup : indicateurs utilisés par la stratégie et points par composante.
+    lignes_setup = setup_lines(strategy, score_components)
+    if lignes_setup:
+        embed.add_field(name="Setup", value="\n".join(lignes_setup), inline=False)
     # Sorties partielles suggérées (scale-out 1/3) : le risque initial
     # (entry - SL) définit TP1/TP2/TP3. BE à +1,5R (mi-chemin TP1→TP2) :
     # quand ce niveau est atteint, le solde est protégé au prix d'entrée.
@@ -140,15 +270,14 @@ def build_signal_embed(
     embed.add_field(
         name="Sorties partielles (suggestion)",
         value=(
-            f"TP1 : {format_price(tp1)} (+1R)\n"
-            f"TP2 : {format_price(tp2)} (+2R)\n"
-            f"TP3 : {format_price(tp3)} (+3R)\n"
+            f"TP1 : {format_price(tp1)} (+1R · {format_pips(symbol, entry_price, tp1)})\n"
+            f"TP2 : {format_price(tp2)} (+2R · {format_pips(symbol, entry_price, tp2)})\n"
+            f"TP3 : {format_price(tp3)} (+3R · {format_pips(symbol, entry_price, tp3)})\n"
             f"BE : SL → entrée à {format_price(be_trigger)} (+1,5R)"
         ),
         inline=False,
     )
-    if score is not None:
-        embed.add_field(name="Signal Score", value=f"{score}/100", inline=True)
+    if score_value is not None:
         # Projet.md §40 : jamais présenté comme une probabilité de gain.
         embed.set_footer(text="Score = qualité interne du signal (pas une probabilité de gain)")
     return embed
@@ -167,6 +296,11 @@ def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
     Le paramètre `signal` est un `app.database.models.Signal` (typage en str
     pour éviter une dépendance circulaire embeds -> models).
     """
+    components = {
+        field: getattr(signal, field)
+        for field in SCORE_COMPONENT_MAX
+        if getattr(signal, field) is not None
+    }
     return build_signal_embed(
         action=signal.action,
         symbol=signal.symbol,
@@ -178,6 +312,7 @@ def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
         risk_reward=signal.risk_reward,
         signal_time=signal.signal_timestamp,
         score=signal.score,
+        score_components=components or None,
         trade_number=signal.sequence_number,
     )
 
@@ -205,15 +340,6 @@ def build_signals_list_embed(rows: list) -> discord.Embed:
 def _paper_line(label: str, stats: PerformanceStats) -> str:
     """Ligne compacte d'une ventilation paper : n · win% · total R."""
     return f"{label} : {stats.total} trades · {stats.win_rate}% · {stats.total_r} R"
-
-
-def _fmt_r(value: Decimal) -> str:
-    """Décimal R lisible sans exposant (``Decimal('100').normalize()`` donnerait ``1E+2``)."""
-    return format(value.normalize(), "f")
-
-
-def _signe_r(value: Decimal) -> str:
-    return "+" if value > 0 else ""
 
 
 def build_stats_embed(
@@ -367,8 +493,8 @@ def build_tp_progress_embed(alert) -> discord.Embed:
     """Embed d'une sortie partielle TP1/TP2 validée (salon dédié TP).
 
     `alert` : `app.paper_trading.engine.TpAlert`. Affiche l'état des TP
-    connus : validés ✅ ou en cours ⏳. Rappel de gestion humaine (scale-out),
-    aucun ordre.
+    connus : validés ✅ ou en cours ⏳, avec la distance en pips depuis
+    l'entrée. Rappel de gestion humaine (scale-out), aucun ordre.
     """
     numero = f"Trade #{alert.sequence_number}" if alert.sequence_number is not None else alert.symbol
     embed = discord.Embed(
@@ -382,7 +508,8 @@ def build_tp_progress_embed(alert) -> discord.Embed:
     lignes = []
     for niveau, prix, valide in alert.niveaux:
         etat = "✅ validé" if valide else "⏳ en cours"
-        lignes.append(f"TP{niveau} : {etat} ({format_price(prix)})")
+        pips = format_pips(alert.symbol, alert.entry_price, prix)
+        lignes.append(f"TP{niveau} : {etat} ({format_price(prix)} · {pips})")
     embed.add_field(name="Take Profits", value="\n".join(lignes), inline=False)
     embed.set_footer(
         text="Sorties partielles — gestion manuelle, aucun ordre automatique"
@@ -426,71 +553,77 @@ def build_weekly_recap_embed(
     *,
     debut: datetime,
     fin: datetime,
-    ouvertes_semaine: list,
     cloturees_semaine: list,
     en_cours: list,
-    cloturees_semaine_precedente: list | None = None,
 ) -> discord.Embed:
     """Embed du récap hebdomadaire (vendredi 22h, heure locale configurée).
 
-    - `ouvertes_semaine` : lignes (PaperPosition, Signal, nom de stratégie)
-      ouvertes sur les 7 derniers jours ;
+    Format simplifié validé par l'utilisateur (2026-09-11) : performance de la
+    semaine, ventilations symbole/direction, meilleur/pire trade, positions
+    encore en cours — sans détail trade par trade.
+
     - `cloturees_semaine` : lignes (PaperPosition, PaperTrade, Signal, nom de
       stratégie) clôturées sur les 7 derniers jours ;
-    - `cloturees_semaine_precedente` : mêmes lignes pour les 7 jours
-      précédents (comparaison du bilan) ;
     - `en_cours` : TOUTES les positions ouvertes — elles restent dans chaque
       récap jusqu'à leur TP/SL.
     """
     embed = discord.Embed(
-        title=(
-            f"📅 Récap hebdomadaire — semaine du "
-            f"{debut.strftime('%d/%m/%Y')} au {fin.strftime('%d/%m/%Y')}"
-        ),
+        title="📊 Récap hebdomadaire",
+        description=f"{debut.strftime('%d/%m')} → {fin.strftime('%d/%m')}",
         color=ORANGE,
     )
 
-    lignes_ouvertes = [
-        f"{'🟢' if signal.action == 'BUY' else '🔴'} #{signal.sequence_number} "
-        f"**{signal.symbol}** "
-        f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
-        f"{strategy_label(strategy_name)} · entry {format_price(signal.entry_price)} · "
-        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)} · "
-        f"ouvert le {format_day_time(position.opened_at)}"
-        for position, signal, strategy_name in ouvertes_semaine
-    ]
-    embed.add_field(
-        name=f"📈 Nouvelles positions ({len(ouvertes_semaine)})",
-        value="\n".join(lignes_ouvertes) or "—",
-        inline=False,
-    )
-
-    lignes_cloturees = []
-    for _position, trade, signal, strategy_name in cloturees_semaine:
-        gagnant = trade.exit_reason == "TP"
-        signe = "+" if _position.result_r > 0 else ""
-        lignes_cloturees.append(
-            f"{'✅' if gagnant else '❌'} #{signal.sequence_number} "
-            f"**{signal.symbol}** "
-            f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
-            f"{'TP' if gagnant else 'SL'} @ {format_price(trade.exit_price)} · "
-            f"{signe}{_position.result_r.normalize()} R · "
-            f"{format_day_time(_position.opened_at)} → {format_day_time(trade.closed_at)}"
+    stats = compute_stats([p.result_r for p, _t, _s, _st in cloturees_semaine])
+    if stats.total > 0:
+        pf = "—" if stats.profit_factor is None else _fmt_fr(stats.profit_factor)
+        perf = (
+            f"{stats.total} trade{'s' if stats.total != 1 else ''}\n"
+            f"🟢 {stats.wins} gagnant{'s' if stats.wins != 1 else ''} · "
+            f"🔴 {stats.losses} perdant{'s' if stats.losses != 1 else ''}\n"
+            f"Winrate : {_fmt_fr(stats.win_rate)} %\n"
+            f"Résultat : {format_r_fr(stats.total_r)}\n"
+            f"PF : {pf}\n"
+            f"Moyenne : {format_r_fr(stats.avg_r)}"
         )
-    embed.add_field(
-        name=f"🏁 Clôturées cette semaine ({len(cloturees_semaine)})",
-        value="\n".join(lignes_cloturees) or "—",
-        inline=False,
-    )
+    else:
+        perf = "0 trade\nAucune clôture cette semaine"
+    embed.add_field(name="📈 Performance", value=perf, inline=False)
+
+    if stats.total > 0:
+        par_symbole, par_direction = paper_breakdown(
+            [(p.result_r, s.symbol, s.action) for p, _t, s, _st in cloturees_semaine]
+        )
+        embed.add_field(
+            name="Symboles",
+            value="\n".join(
+                f"{_symbol_emoji(symbole)} {_symbole_court(symbole)} : "
+                f"{format_r_fr(symbole_stats.total_r)}"
+                for symbole, symbole_stats in par_symbole.items()
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Directions",
+            value="\n".join(
+                f"{'🟢 BUY' if a == 'BUY' else '🔴 SELL'} : {format_r_fr(dir_stats.total_r)}"
+                for a, dir_stats in sorted(par_direction.items())
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Extrêmes",
+            value=(
+                f"🏆 Meilleur : {format_r_fr(stats.best_r)}\n"
+                f"📉 Pire : {format_r_fr(stats.worst_r)}"
+            ),
+            inline=False,
+        )
 
     lignes_cours = [
-        f"{'🟢' if signal.action == 'BUY' else '🔴'} #{signal.sequence_number} "
-        f"**{signal.symbol}** "
+        f"#{signal.sequence_number} {signal.symbol} "
         f"{'LONG' if signal.action == 'BUY' else 'SHORT'} · "
-        f"depuis le {format_day_time(position.opened_at)} · "
-        f"entry {format_price(signal.entry_price)} · "
-        f"SL {format_price(signal.stop_loss)} · TP {format_price(signal.take_profit)}"
-        for position, signal, strategy_name in en_cours
+        f"depuis le {format_day_time(position.opened_at)}"
+        for position, signal, _strategy_name in en_cours
     ]
     embed.add_field(
         name=f"⏳ En cours ({len(en_cours)})",
@@ -498,49 +631,41 @@ def build_weekly_recap_embed(
         inline=False,
     )
 
-    # --- Bilan enrichi (stats R, comparaison S-1, ventilation direction) ---
-    stats = compute_stats([p.result_r for p, _t, _s, _st in cloturees_semaine])
-    if stats.total > 0:
-        pf = "—" if stats.profit_factor is None else _fmt_r(stats.profit_factor)
-        bilan = (
-            f"{stats.total} trades · win {stats.win_rate}% · "
-            f"{_signe_r(stats.total_r)}{_fmt_r(stats.total_r)} R\n"
-            f"Moyenne {_signe_r(stats.avg_r)}{_fmt_r(stats.avg_r)} R · "
-            f"Médiane {_signe_r(stats.median_r)}{_fmt_r(stats.median_r)} R · PF {pf}\n"
-            f"Meilleur {_signe_r(stats.best_r)}{_fmt_r(stats.best_r)} R · "
-            f"Pire {_signe_r(stats.worst_r)}{_fmt_r(stats.worst_r)} R"
-        )
-        stats_precedentes = compute_stats(
-            [p.result_r for p, _t, _s, _st in cloturees_semaine_precedente or []]
-        )
-        if stats_precedentes.total > 0:
-            delta = stats.total_r - stats_precedentes.total_r
-            bilan += (
-                f"\nSemaine précédente : "
-                f"{_signe_r(stats_precedentes.total_r)}{_fmt_r(stats_precedentes.total_r)} R "
-                f"({stats_precedentes.total} trades) · "
-                f"Δ {_signe_r(delta)}{_fmt_r(delta)} R"
-            )
-    else:
-        bilan = "Aucune clôture cette semaine"
-    embed.add_field(name="Résultat de la semaine", value=bilan, inline=False)
+    strategies = {strategy_name for *_reste, strategy_name in en_cours}
+    strategies.update(strategy_name for *_a, _b, _c, strategy_name in cloturees_semaine)
+    noms = " · ".join(sorted(strategy_label(s) for s in strategies))
+    prefixe = f"🤖 {noms} · " if noms else ""
+    embed.set_footer(text=f"{prefixe}Paper trading · Aucun ordre réel")
+    return embed
 
-    if stats.total > 0:
-        _symbole, par_direction = paper_breakdown(
-            [(p.result_r, s.symbol, s.action) for p, _t, s, _st in cloturees_semaine]
-        )
-        lignes_direction = [
-            _paper_line("🟢 BUY" if action == "BUY" else "🔴 SELL", dir_stats)
-            for action, dir_stats in sorted(par_direction.items())
-        ]
-        embed.add_field(
-            name="Par direction (R)",
-            value="\n".join(lignes_direction),
-            inline=False,
-        )
-    embed.set_footer(
-        text="Paper trading — simulation locale en R, aucun ordre réel · "
-        "heures de Paris · les positions en cours restent affichées "
-        "chaque semaine jusqu'à TP/SL"
+
+def build_performance_embed(
+    *,
+    periodes: list[tuple[str, Decimal]],
+    stats: PerformanceStats,
+) -> discord.Embed:
+    """Performance paper trading par période (commande /performance).
+
+    `periodes` : couples (libellé, total R) — ex. (« 7 jours », +1R). Les
+    métriques de détail portent sur l'historique complet des clôtures.
+    """
+    embed = discord.Embed(title="📈 Performance", color=PURPLE)
+    embed.add_field(
+        name="Résultat (R)",
+        value="\n".join(f"{libelle} : {format_r_fr(total)}" for libelle, total in periodes),
+        inline=False,
     )
+    pf = "—" if stats.profit_factor is None else _fmt_fr(stats.profit_factor)
+    embed.add_field(
+        name="Détail (historique complet)",
+        value=(
+            f"Winrate : {_fmt_fr(stats.win_rate)} %\n"
+            f"Profit Factor : {pf}\n"
+            f"Expectancy : {format_r_fr(stats.avg_r)}\n"
+            f"Max Drawdown : -{_fmt_fr(stats.max_drawdown_r)}R\n"
+            f"Trades : {stats.total}"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Paper trading — simulation locale en R, aucun ordre réel")
     return embed

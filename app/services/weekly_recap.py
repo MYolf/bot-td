@@ -1,13 +1,12 @@
 """Récap hebdomadaire du paper trading (vendredi 22h, heure locale configurée).
 
 Chaque vendredi à l'heure configurée (Europe/Paris par défaut), publie dans le
-salon Discord dédié :
-- les positions ouvertes durant la semaine (7 derniers jours) ;
-- les positions clôturées durant la semaine (TP/SL, résultat en R) ;
-- TOUTES les positions encore en cours : elles restent affichées dans chaque
-  récap jusqu'à leur TP/SL ;
-- le bilan en R de la semaine (win rate, moyenne, meilleur/pire trade,
-  comparaison avec la semaine précédente, ventilation par direction).
+salon Discord dédié un récap simplifié (format validé 2026-09-11) :
+- la performance de la semaine (trades, gagnants/perdants, winrate, total R,
+  PF, moyenne) ;
+- les ventilations par symbole et par direction ;
+- le meilleur et le pire trade ;
+- TOUTES les positions encore en cours (une ligne chacune, jusqu'à TP/SL).
 
 Lecture seule de la base + envoi Discord : aucune décision, aucun ordre
 (règle absolue du projet — simulation locale uniquement).
@@ -72,27 +71,20 @@ class WeeklyRecapService:
 
         async with self._session_factory() as session:
             repository = PaperRepository(session)
-            ouvertes = await repository.opened_between(week_start, now)
             cloturees = await repository.closed_between(week_start, now)
-            cloturees_precedentes = await repository.closed_between(
-                week_start - timedelta(days=7), week_start
-            )
             en_cours = await repository.open_all()
 
         embed = build_weekly_recap_embed(
             debut=week_start.astimezone(self._tz),
             fin=now_local,
-            ouvertes_semaine=ouvertes,
             cloturees_semaine=cloturees,
-            cloturees_semaine_precedente=cloturees_precedentes,
             en_cours=en_cours,
         )
         message_id = await self._notifier.send_signal(embed)
         logger.info(
-            "Récap hebdomadaire publié semaine=%s->%s ouvertes=%d clôturées=%d en_cours=%d message_id=%s",
+            "Récap hebdomadaire publié semaine=%s->%s clôturées=%d en_cours=%d message_id=%s",
             week_start.date(),
             now_local.date(),
-            len(ouvertes),
             len(cloturees),
             len(en_cours),
             message_id,

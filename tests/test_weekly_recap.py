@@ -2,7 +2,8 @@
 
 Catalogue : calcul de la prochaine échéance (vendredi 22h Paris, heure
 d'été/hiver), requêtes opened_between / closed_between / open_all, embed du
-récap (sections, bilan R), envoi via le service avec notifieur factice.
+récap simplifié (performance, ventilations, en cours), envoi via le service
+avec notifieur factice.
 """
 
 import asyncio
@@ -177,16 +178,12 @@ def _partition(client):
     return asyncio.run(run())
 
 
-def _partition_precedente(client):
+def _cloturees_precedentes(client):
     async def run():
         async with client.db_factory() as session:
             repository = PaperRepository(session)
-            return (
-                None,
-                await repository.closed_between(
-                    SEMAINE_DEBUT_UTC - timedelta(days=7), SEMAINE_DEBUT_UTC
-                ),
-                None,
+            return await repository.closed_between(
+                SEMAINE_DEBUT_UTC - timedelta(days=7), SEMAINE_DEBUT_UTC
             )
 
     return asyncio.run(run())
@@ -204,80 +201,72 @@ class TestRequetesRecap:
         # Ordre chronologique d'ouverture : SOL (hors semaine) puis BTC.
         assert [signal.symbol for _p, signal, _s in en_cours] == ["SOLUSDT", "BTCUSDT"]
 
+    def test_clotures_de_la_semaine_precedente(self, client):
+        # La requête reste utilisée (fenêtre glissante de /performance) :
+        # seule la clôture XRP (-1 R) tombe avant le début de la semaine.
+        _seed(client)
+        assert [
+            signal.symbol for _p, _t, signal, _s in _cloturees_precedentes(client)
+        ] == ["XRPUSDT"]
+
     def test_aucune_donnee(self, client):
         assert _partition(client) == ([], [], [])
 
 
-# --- Embed du récap ---
+# --- Embed du récap (format simplifié validé 2026-09-11) ---
 
 class TestEmbedRecap:
-    def test_sections_et_bilan(self, client):
+    def test_format_simplifie(self, client):
         _seed(client)
-        ouvertes, cloturees, en_cours = _partition(client)
-        _, cloturees_precedentes, _ = _partition_precedente(client)
+        _ouvertes, cloturees, en_cours = _partition(client)
 
         embed = build_weekly_recap_embed(
             debut=SEMAINE_DEBUT_UTC.astimezone(PARIS),
             fin=NOW.astimezone(PARIS),
-            ouvertes_semaine=ouvertes,
             cloturees_semaine=cloturees,
-            cloturees_semaine_precedente=cloturees_precedentes,
             en_cours=en_cours,
         )
+        assert embed.title == "📊 Récap hebdomadaire"
+        assert embed.description == "24/08 → 31/08"
         texte = {f.name: f.value for f in embed.fields}
 
-        assert "BTCUSDT" in texte["📈 Nouvelles positions (1)"]
-        assert "LONG" in texte["📈 Nouvelles positions (1)"]
-        # Jour + heure d'ouverture (Paris = UTC+2 fin août).
-        assert "ouvert le dimanche 30/08 12:00" in texte["📈 Nouvelles positions (1)"]
-        assert "ETHUSDT" in texte["🏁 Clôturées cette semaine (1)"]
-        assert "TP @ 104" in texte["🏁 Clôturées cette semaine (1)"]
-        assert "+2 R" in texte["🏁 Clôturées cette semaine (1)"]
-        # Ouverture -> clôture avec jour et heure (Paris) : ETH ouverte le
-        # 22/08 18:00 UTC, clôturée le 28/08 14:00 UTC.
-        assert (
-            "samedi 22/08 20:00 → vendredi 28/08 16:00"
-            in texte["🏁 Clôturées cette semaine (1)"]
+        # Semaine : 1 clôture ETH SELL en TP (+2 R), aucune perte.
+        assert texte["📈 Performance"] == (
+            "1 trade\n"
+            "🟢 1 gagnant · 🔴 0 perdants\n"
+            "Winrate : 100 %\n"
+            "Résultat : +2R\n"
+            "PF : —\n"
+            "Moyenne : +2R"
         )
-        # Les deux positions ouvertes (y compris l'ancienne) restent affichées,
-        # avec le jour et l'heure locale (plus d'UTC affiché nu).
-        assert "BTCUSDT" in texte["⏳ En cours (2)"]
-        assert "SOLUSDT" in texte["⏳ En cours (2)"]
-        assert "depuis le samedi 22/08 20:00" in texte["⏳ En cours (2)"]
-        assert "UTC" not in texte["⏳ En cours (2)"]
+        assert texte["Symboles"] == "♦️ ETH : +2R"
+        assert texte["Directions"] == "🔴 SELL : +2R"
+        assert texte["Extrêmes"] == "🏆 Meilleur : +2R\n📉 Pire : +2R"
 
-        # Numéro de trade sur chaque ligne (ordre de création : BTC #1, ETH #2).
-        assert "#1 **BTCUSDT**" in texte["📈 Nouvelles positions (1)"]
-        assert "#2 **ETHUSDT**" in texte["🏁 Clôturées cette semaine (1)"]
-        assert "#4 **SOLUSDT**" in texte["⏳ En cours (2)"]
+        # Toutes les positions ouvertes restent affichées, une ligne chacune
+        # (ordre d'ouverture : SOL puis BTC), heure de Paris.
+        assert texte["⏳ En cours (2)"] == (
+            "#4 SOLUSDT LONG · depuis le samedi 22/08 20:00\n"
+            "#1 BTCUSDT LONG · depuis le dimanche 30/08 12:00"
+        )
 
-        # Bilan enrichi : 1 trade TP (+2 R), PF indéfini (aucune perte).
-        bilan = texte["Résultat de la semaine"]
-        assert "1 trades · win 100.00% · +2 R" in bilan
-        assert "PF —" in bilan
-        assert "Meilleur +2 R · Pire +2 R" in bilan
-        # Comparaison S-1 : -1 R la semaine précédente -> delta +3 R.
-        assert "Semaine précédente : -1 R (1 trades)" in bilan
-        assert "Δ +3 R" in bilan
-
-        # Ventilation par direction : seule la clôture SELL de la semaine compte.
-        assert texte["Par direction (R)"] == "🔴 SELL : 1 trades · 100.00% · 2.00 R"
-        assert "semaine du 24/08/2026 au 31/08/2026" in embed.title
+        # Footer : stratégie(s) + rappel paper trading.
+        assert embed.footer.text == "🤖 Momentum V1 · Paper trading · Aucun ordre réel"
 
     def test_semaine_sans_activite(self):
         embed = build_weekly_recap_embed(
             debut=SEMAINE_DEBUT_UTC.astimezone(PARIS),
             fin=NOW.astimezone(PARIS),
-            ouvertes_semaine=[],
             cloturees_semaine=[],
             en_cours=[],
         )
         texte = {f.name: f.value for f in embed.fields}
-        assert texte["📈 Nouvelles positions (0)"] == "—"
-        assert texte["🏁 Clôturées cette semaine (0)"] == "—"
+        assert texte["📈 Performance"] == "0 trade\nAucune clôture cette semaine"
         assert texte["⏳ En cours (0)"] == "—"
-        assert texte["Résultat de la semaine"] == "Aucune clôture cette semaine"
-        assert "Par direction (R)" not in texte
+        # Pas de ventilations sans clôture.
+        assert "Symboles" not in texte
+        assert "Directions" not in texte
+        assert "Extrêmes" not in texte
 
 
 # --- Service complet (base + notifieur factice) ---
@@ -292,13 +281,11 @@ class TestWeeklyRecapService:
 
         assert message_id == 1001
         (embed,) = fake.sent
-        assert "📅 Récap hebdomadaire — semaine du 24/08/2026 au 31/08/2026" in embed.title
+        assert embed.title == "📊 Récap hebdomadaire"
         texte = {f.name: f.value for f in embed.fields}
-        assert "BTCUSDT" in texte["📈 Nouvelles positions (1)"]
-        assert "+2 R" in texte["Résultat de la semaine"]
-        # La comparaison S-1 est alimentée par le service (clôtures S-1 : -1 R).
-        assert "Semaine précédente : -1 R (1 trades)" in texte["Résultat de la semaine"]
-        assert "Par direction (R)" in texte
+        assert "Résultat : +2R" in texte["📈 Performance"]
+        assert "♦️ ETH : +2R" in texte["Symboles"]
+        assert "#1 BTCUSDT LONG" in texte["⏳ En cours (2)"]
 
     def test_run_absorbe_les_echecs(self, client, monkeypatch):
         """Un échec (Discord KO, base KO) est loggé et absorbé : la boucle

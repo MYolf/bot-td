@@ -494,7 +494,7 @@ class TestSortiesPartielles:
         assert embed.title == "✅ TP1 validé — Trade #1"
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Take Profits"] == (
-            "TP1 : ✅ validé (102)\nTP2 : ⏳ en cours (104)"
+            "TP1 : ✅ validé (102 · +2 pips)\nTP2 : ⏳ en cours (104 · +4 pips)"
         )
         # Position toujours ouverte, drapeaux persistés.
         (position,) = _positions(client)
@@ -528,7 +528,7 @@ class TestSortiesPartielles:
         # Les deux niveaux affichés validés dans le rappel TP2.
         champs = {f.name: f.value for f in fake_tp.sent[1].fields}
         assert champs["Take Profits"] == (
-            "TP1 : ✅ validé (102)\nTP2 : ✅ validé (104)"
+            "TP1 : ✅ validé (102 · +2 pips)\nTP2 : ✅ validé (104 · +4 pips)"
         )
 
     def test_sl_et_tp1_meme_bougie_sl_prioritaire(self, client):
@@ -600,4 +600,4 @@ class TestSortiesPartielles:
 
         assert len(fake_tp.sent) == 1
         champs = {f.name: f.value for f in fake_tp.sent[0].fields}
-        assert "TP1 : ✅ validé (98)" in champs["Take Profits"]
+        assert "TP1 : ✅ validé (98 · +2 pips)" in champs["Take Profits"]

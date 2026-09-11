@@ -167,6 +167,7 @@ class TpAlert:
     sequence_number: int | None
     symbol: str
     action: str
+    entry_price: Decimal
     level: int
     level_price: Decimal
     niveaux: tuple[tuple[int, Decimal, bool], ...]
@@ -312,6 +313,7 @@ class PaperTradingEngine:
                             sequence_number=signal.sequence_number,
                             symbol=signal.symbol,
                             action=signal.action,
+                            entry_price=signal.entry_price,
                             level=multiple,
                             level_price=level_price,
                             niveaux=niveaux,

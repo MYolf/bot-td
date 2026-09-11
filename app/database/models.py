@@ -76,6 +76,15 @@ class Signal(Base):
     # Score de qualité (Phase 26) : NULL si la stratégie n'envoie aucune
     # composante. Indicateur interne, jamais une probabilité de gain.
     score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Composantes du score, persistées pour l'affichage (champ Setup et score
+    # recalibré sur 100) : NULL si la stratégie ne les évalue pas. Les signaux
+    # antérieurs à la colonne restent NULL (score brut affiché en points).
+    score_trend: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    score_momentum: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    score_macd: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    score_volume: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    score_structure: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    score_htf: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

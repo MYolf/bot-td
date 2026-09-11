@@ -25,16 +25,25 @@ SCORE_COMPONENT_MAX: dict[str, int] = {
 }
 
 
+def present_components(signal: TradingViewSignal) -> dict[str, int]:
+    """Composantes réellement envoyées par la stratégie (les autres absentes).
+
+    Ex. momentum_v1 n'évalue que trend/momentum/macd : maximum 55 points de
+    barème. Sert au recalibrage de l'affichage sur 100 (voir embeds).
+    """
+    return {
+        field: value
+        for field in SCORE_COMPONENT_MAX
+        if (value := getattr(signal, field)) is not None
+    }
+
+
 def compute_score(signal: TradingViewSignal) -> int | None:
     """Total du score (0-100), ou None si le signal n'envoie aucune composante.
 
     Une composante absente vaut 0 (la stratégie ne l'évalue pas).
     """
-    values = [
-        getattr(signal, field)
-        for field in SCORE_COMPONENT_MAX
-        if getattr(signal, field) is not None
-    ]
-    if not values:
+    components = present_components(signal)
+    if not components:
         return None
-    return sum(values)
+    return sum(components.values())

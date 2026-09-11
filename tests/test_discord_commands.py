@@ -9,6 +9,7 @@ Aucune connexion Discord : les callbacks sont invoqués avec un fake.
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import delete, select
@@ -17,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config.settings import Settings
 from app.database.database import set_session_factory
-from app.database.models import Base, Signal, Strategy
+from app.database.models import Base, PaperPosition, PaperTrade, Signal, Strategy
 from app.discord import commands as bot_commands
 from tests.test_discord_bot import FakeInteraction
 
@@ -165,13 +166,86 @@ class TestStrategyCommand:
         assert "Signaux : 1" in champs["Gold Breakout V1"]
 
 
+class TestPerformanceCommand:
+    async def _seed_positions(self, factory):
+        """Deux clôtures récentes (+2R, -1R) et une ancienne (+2R il y a 40 j)."""
+        ancien = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+        recent = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        async with factory() as session:
+            positions = [
+                PaperPosition(
+                    signal_id=1,
+                    status="CLOSED",
+                    opened_at=recent,
+                    closed_at=recent,
+                    result_r=Decimal("2"),
+                ),
+                PaperPosition(
+                    signal_id=2,
+                    status="CLOSED",
+                    opened_at=recent,
+                    closed_at=recent,
+                    result_r=Decimal("-1"),
+                ),
+                PaperPosition(
+                    signal_id=3,
+                    status="CLOSED",
+                    opened_at=ancien,
+                    closed_at=ancien,
+                    result_r=Decimal("2"),
+                ),
+            ]
+            session.add_all(positions)
+            await session.flush()
+            session.add_all(
+                [
+                    PaperTrade(
+                        paper_position_id=position.id,
+                        exit_reason="TP" if position.result_r > 0 else "SL",
+                        exit_price=Decimal("104"),
+                        closed_at=position.closed_at,
+                    )
+                    for position in positions
+                ]
+            )
+            await session.commit()
+
+    async def test_periodes_et_metriques(self, test_settings: Settings, db_factory, monkeypatch):
+        await self._seed_positions(db_factory)
+        # Date fixe : les clôtures du 09/09 tombent dans 7/30/90 jours,
+        # celle du 01/08 (40 j avant) seulement dans Total.
+        now = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            "app.discord.commands.datetime",
+            MagicMock(now=lambda tz: now),
+        )
+        interaction = FakeInteraction(test_settings)
+        await bot_commands.performance_command.callback(interaction)  # type: ignore[attr-defined]
+        (appel,) = interaction.response.sent
+        embed = appel["embed"]
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Résultat (R)"] == (
+            "7 jours : +1R\n30 jours : +1R\n90 jours : +3R\nTotal : +3R"
+        )
+        detail = champs["Détail (historique complet)"]
+        assert "Winrate : 66,67 %" in detail
+        assert "Trades : 3" in detail
+
+
 class TestEnregistrement:
     def test_toutes_les_commandes_sont_sur_l_arbre(self, test_settings: Settings):
         from app.discord.bot import create_bot
 
         bot = create_bot(test_settings)
         bot_commands.register(bot)
-        for nom in ("status", "lastsignal", "signals", "stats", "strategy"):
+        for nom in (
+            "status",
+            "lastsignal",
+            "signals",
+            "stats",
+            "strategy",
+            "performance",
+        ):
             commande = bot.tree.get_command(nom)
             assert commande is not None, f"commande /{nom} manquante"
             assert commande.description  # description requise par Discord

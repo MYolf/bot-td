@@ -7,6 +7,7 @@ from app.discord.embeds import (
     GREEN,
     RED,
     build_closure_embed,
+    build_performance_embed,
     build_signal_embed,
     build_stats_embed,
     format_day_time,
@@ -80,30 +81,42 @@ class TestEmbed:
         assert champs["Timeframe"] == "15m"
         assert champs["Entry"] == "104,532.42"
         assert champs["Stop Loss"] == "103,800"
-        assert champs["Take Profit"] == "106,000"
+        # TP avec distance en pips (1 pip = 1 $ : 106000 - 104532.42 = 1467.58).
+        assert champs["Take Profit"] == "106,000\n+1,468 pips"
         assert champs["Risk/Reward"] == "1:2"
         assert champs["Signal Time"] == "22:14:03 UTC"
 
     def test_sorties_partielles_buy(self):
         # Risque = 104532.42 - 103800 = 732.42 -> TP1/2/3 à +1R/+2R/+3R,
-        # déclencheur BE à +1,5R (mi-chemin TP1->TP2).
+        # déclencheur BE à +1,5R (mi-chemin TP1->TP2). Pips arrondis au plus
+        # proche : 732.42 -> 732, 1464.84 -> 1465, 2197.26 -> 2197.
         embed = _embed("BUY")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
         assert partielles == (
-            "TP1 : 105,264.84 (+1R)\nTP2 : 105,997.26 (+2R)\nTP3 : 106,729.68 (+3R)\n"
+            "TP1 : 105,264.84 (+1R · +732 pips)\n"
+            "TP2 : 105,997.26 (+2R · +1,465 pips)\n"
+            "TP3 : 106,729.68 (+3R · +2,197 pips)\n"
             "BE : SL → entrée à 105,631.05 (+1,5R)"
         )
 
     def test_sorties_partielles_sell(self):
-        # SELL : risque = SL - entry = 103800 - 104532.42 = 732.42 vers le bas.
+        # SELL : risque = SL - entry = 105264.84 - 104532.42 = 732.42 vers le bas.
         embed = _embed("SELL")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
         assert partielles == (
-            "TP1 : 103,800 (+1R)\nTP2 : 103,067.58 (+2R)\nTP3 : 102,335.16 (+3R)\n"
+            "TP1 : 103,800 (+1R · +732 pips)\n"
+            "TP2 : 103,067.58 (+2R · +1,465 pips)\n"
+            "TP3 : 102,335.16 (+3R · +2,197 pips)\n"
             "BE : SL → entrée à 103,433.79 (+1,5R)"
         )
+
+    def test_sell_take_profit_pips(self):
+        # SELL : TP sous l'entrée, distance symétrique du BUY.
+        embed = _embed("SELL")
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Take Profit"] == "103,067.58\n+1,465 pips"
 
 
 class TestScaledTargets:
@@ -323,6 +336,7 @@ class TestTpProgressEmbed:
             sequence_number=12,
             symbol="BTCUSDT",
             action="BUY",
+            entry_price=Decimal("100"),
             level=level,
             level_price=Decimal("102"),
             niveaux=niveaux
@@ -337,7 +351,10 @@ class TestTpProgressEmbed:
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Symbole"] == "BTCUSDT"
         assert champs["Position"] == "LONG 🟢"
-        assert champs["Take Profits"] == "TP1 : ✅ validé (102)\nTP2 : ⏳ en cours (104)"
+        # Distance en pips depuis l'entrée (1 pip = 1 $) sur chaque niveau.
+        assert champs["Take Profits"] == (
+            "TP1 : ✅ validé (102 · +2 pips)\nTP2 : ⏳ en cours (104 · +4 pips)"
+        )
         assert "aucun ordre" in embed.footer.text
 
     def test_tp2_avec_les_deux_valides(self):
@@ -350,8 +367,8 @@ class TestTpProgressEmbed:
         embed = build_tp_progress_embed(alert)
         assert embed.title == "✅ TP2 validé — Trade #12"
         champs = {f.name: f.value for f in embed.fields}
-        assert "TP1 : ✅ validé (102)" in champs["Take Profits"]
-        assert "TP2 : ✅ validé (104)" in champs["Take Profits"]
+        assert "TP1 : ✅ validé (102 · +2 pips)" in champs["Take Profits"]
+        assert "TP2 : ✅ validé (104 · +4 pips)" in champs["Take Profits"]
 
     def test_sans_numero_symbole_en_titre(self):
         from app.discord.embeds import build_tp_progress_embed
@@ -360,3 +377,120 @@ class TestTpProgressEmbed:
         object.__setattr__(alert, "sequence_number", None)
         embed = build_tp_progress_embed(alert)
         assert embed.title == "✅ TP1 validé — BTCUSDT"
+
+
+class TestScoreEtSetup:
+    """Score recalibré sur 100 (max des composantes envoyées) + champ Setup."""
+
+    def _embed(self, score, components):
+        return build_signal_embed(
+            action="BUY",
+            symbol="BTCUSDT",
+            strategy="momentum_v1",
+            timeframe="15",
+            entry_price="100",
+            stop_loss="98",
+            take_profit="104",
+            risk_reward="2",
+            signal_time=datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc),
+            score=score,
+            score_components=components,
+            trade_number=12,
+        )
+
+    def test_score_recalibre_sur_max_des_composantes(self):
+        # momentum_v1 : max 55 points de barème. 45/55 -> 82/100.
+        embed = self._embed(
+            45, {"score_trend": 20, "score_momentum": 10, "score_macd": 15}
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Signal Score"] == "82/100"
+        assert "probabilité" in (embed.footer.text or "")
+
+    def test_score_maximal_a_100(self):
+        embed = self._embed(
+            55, {"score_trend": 20, "score_momentum": 20, "score_macd": 15}
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Signal Score"] == "100/100"
+
+    def test_setup_avec_points_par_indicateur(self):
+        embed = self._embed(
+            55, {"score_trend": 20, "score_momentum": 20, "score_macd": 15}
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Setup"] == (
+            "Tendance — EMA 50/200 : 20/20\n"
+            "Momentum — RSI 14 : 20/20\n"
+            "MACD 12/26/9 : 15/15"
+        )
+
+    def test_sans_composantes_score_brut_et_setup_indicateurs(self):
+        # Anciens signaux : pas de composantes -> score brut en points,
+        # Setup limité aux indicateurs (sans points).
+        embed = self._embed(45, None)
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Signal Score"] == "45 pts"
+        assert champs["Setup"] == (
+            "Tendance — EMA 50/200\nMomentum — RSI 14\nMACD 12/26/9"
+        )
+
+    def test_barème_complet_atteint_100_sans_recalage(self):
+        # Toutes les composantes (max 100) : recalibrage neutre.
+        embed = self._embed(
+            75,
+            {
+                "score_trend": 20,
+                "score_momentum": 20,
+                "score_macd": 15,
+                "score_volume": 5,
+                "score_structure": 10,
+                "score_htf": 5,
+            },
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Signal Score"] == "75/100"
+
+
+class TestFormatPips:
+    def test_distance_entiere(self):
+        from app.discord.embeds import format_pips
+
+        assert format_pips("BTCUSDT", "100000", "102500") == "+2,500 pips"
+
+    def test_arrondi_au_plus_proche(self):
+        from app.discord.embeds import format_pips
+
+        assert format_pips("ETHUSDT", "3000", "3010.6") == "+11 pips"
+
+    def test_distance_symetrique(self):
+        from app.discord.embeds import format_pips
+
+        assert format_pips("BTCUSDT", "102500", "100000") == "+2,500 pips"
+
+
+class TestPerformanceEmbed:
+    def test_periodes_et_detail(self):
+        stats = compute_stats(
+            [Decimal("2"), Decimal("2"), Decimal("-1"), Decimal("-1")]
+        )
+        embed = build_performance_embed(
+            periodes=[
+                ("7 jours", Decimal("1")),
+                ("30 jours", Decimal("1")),
+                ("90 jours", Decimal("2")),
+                ("Total", Decimal("2")),
+            ],
+            stats=stats,
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Résultat (R)"] == (
+            "7 jours : +1R\n30 jours : +1R\n90 jours : +2R\nTotal : +2R"
+        )
+        detail = champs["Détail (historique complet)"]
+        assert "Winrate : 50 %" in detail
+        assert "Profit Factor : 2" in detail
+        assert "Expectancy : +0,5R" in detail
+        assert "Max Drawdown : -2R" in detail
+        assert "Trades : 4" in detail
+        assert "aucun ordre réel" in embed.footer.text

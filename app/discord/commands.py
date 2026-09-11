@@ -6,6 +6,8 @@ SQL inline) ; les erreurs remontent au handler global défini dans bot.py.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import discord
 from discord import app_commands
@@ -15,6 +17,7 @@ from app.config.settings import Settings
 from app.database.database import ping_database, session_scope
 from app.database.repository import PaperRepository, SignalRepository, StrategyRepository
 from app.discord.embeds import (
+    build_performance_embed,
     build_signal_embed_from_row,
     build_signals_list_embed,
     build_stats_embed,
@@ -155,6 +158,33 @@ async def strategy_command(interaction: discord.Interaction) -> None:
     logger.info("/strategy invoqué par %s", interaction.user)
 
 
+PERIODES_JOURS = (7, 30, 90)
+
+
+@app_commands.command(
+    name="performance",
+    description="Performance paper trading : 7/30/90 jours, total et métriques",
+)
+async def performance_command(interaction: discord.Interaction) -> None:
+    """R en R par période glissante + métriques sur l'historique complet."""
+    now = datetime.now(timezone.utc)
+    async with session_scope() as session:
+        repository = PaperRepository(session)
+        totaux: list[Decimal] = []
+        for jours in PERIODES_JOURS:
+            rows = await repository.closed_between(now - timedelta(days=jours), now)
+            totaux.append(sum((p.result_r for p, *_reste in rows), Decimal("0")))
+        toutes = await repository.closed_rows()
+    stats = compute_stats([result_r for result_r, _s, _a in toutes])
+    periodes = [
+        (f"{jours} jours", total) for jours, total in zip(PERIODES_JOURS, totaux)
+    ]
+    periodes.append(("Total", stats.total_r))
+    embed = build_performance_embed(periodes=periodes, stats=stats)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    logger.info("/performance invoqué par %s", interaction.user)
+
+
 def register(bot: commands.Bot) -> None:
     """Enregistre toutes les commandes slash sur l'arbre du bot."""
     bot.tree.add_command(status_command)
@@ -162,3 +192,4 @@ def register(bot: commands.Bot) -> None:
     bot.tree.add_command(signals_command)
     bot.tree.add_command(stats_command)
     bot.tree.add_command(strategy_command)
+    bot.tree.add_command(performance_command)
