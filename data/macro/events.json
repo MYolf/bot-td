@@ -1,0 +1,902 @@
+[
+  {
+    "event_type": "NFP",
+    "date": "2022-01-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-01-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-01-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-01-26"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-02-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-02-08"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-02-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-02-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-02-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-03-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-03-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-03-15"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-03-16"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-04-01"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-04-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-04-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-05-04"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-05-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-05-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-05-12"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-06-03"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-06-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-06-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-06-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-07-08"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-07-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-07-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-07-27"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-08-05"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-08-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-08-11"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-09-02"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-09-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-09-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-09-21"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-10-07"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-10-12"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-10-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-11-02"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-11-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-11-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-11-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2022-12-02"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2022-12-09"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2022-12-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2022-12-14"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-01-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-01-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-01-18"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-02-01"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-02-03"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-02-10"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-02-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-02-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-02-16"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-03-10"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-03-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-03-15"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-03-22"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-04-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-04-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-04-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-05-03"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-05-05"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-05-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-05-11"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-06-02"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-06-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-06-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-06-14"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-07-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-07-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-07-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-07-26"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-08-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-08-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-08-11"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-09-01"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-09-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-09-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-09-20"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-10-06"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-10-11"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-10-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-11-01"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-11-03"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-11-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-11-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2023-12-08"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2023-12-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2023-12-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2023-12-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-01-05"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-01-10"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-01-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-01-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-01-31"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-02-02"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-02-09"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-02-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-02-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-02-16"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-03-08"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-03-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-03-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-03-20"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-04-05"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-04-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-04-11"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-05-01"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-05-03"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-05-14"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-05-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-06-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-06-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-06-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-06-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-07-05"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-07-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-07-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-07-31"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-08-02"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-08-13"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-08-14"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-08-21"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-09-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-09-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-09-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-09-18"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-10-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-10-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-10-11"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-11-01"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-11-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-11-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-11-14"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2024-12-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2024-12-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2024-12-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2024-12-18"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-01-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-01-14"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-01-15"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-01-29"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-02-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-02-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-02-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-03-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-03-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-03-13"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-03-19"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-04-04"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-04-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-04-11"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-05-02"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-05-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-05-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-05-15"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-06-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-06-11"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-06-12"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-06-18"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-07-03"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-07-15"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-07-16"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-07-30"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-08-01"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-08-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-08-14"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-09-05"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-09-10"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-09-11"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-09-17"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-10-24"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-10-29"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-11-20"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2025-11-25"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2025-12-10"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2025-12-16"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2025-12-18"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-01-09"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-01-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-01-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-01-28"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-01-30"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-02-11"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-02-13"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-02-27"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-03-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-03-11"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-03-18"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-03-18"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-04-03"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-04-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-04-14"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-04-29"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-05-08"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-05-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-05-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-06-05"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-06-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-06-11"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-06-17"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-07-02"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-07-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-07-15"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-07-29"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-08-07"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-08-12"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-08-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-09-04"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-09-10"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-09-11"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-09-16"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-10-02"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-10-14"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-10-15"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-10-28"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-11-06"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-11-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-11-13"
+  },
+  {
+    "event_type": "NFP",
+    "date": "2026-12-04"
+  },
+  {
+    "event_type": "FOMC",
+    "date": "2026-12-09"
+  },
+  {
+    "event_type": "CPI",
+    "date": "2026-12-10"
+  },
+  {
+    "event_type": "PPI",
+    "date": "2026-12-15"
+  }
+]

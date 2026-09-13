@@ -154,6 +154,18 @@
 
 ## 🔧 En cours / à venir
 
+### Phase 33 — Macro Risk Engine (démarrée 2026-09-13)
+
+Filtre de risque temporel macro (FOMC/CPI/NFP/PPI) — jamais directionnel. Spec scellée : **`MACRO.md`** (périmètre volontairement réduit : time-based uniquement, planning curated versionné sans appel réseau au runtime, DXY/US10Y/forecast/actual rejetés pour la décision, aucune modification du score). Verdict d'analyse : GO AVEC MODIFICATIONS — bénéfice revendiqué = hygiène de risque (mesurable par event study de volatilité), PAS une amélioration d'expectancy (1 à 4 trades bloqués/an attendus, non démontrable statistiquement).
+
+- ✅ **Étape 1 — Socle + event study (Phase A)** (2026-09-13) :
+  - `engine/macro/` : `models.py` (MacroEvent/MacroLevel/MacroContext, UNKNOWN = failsafe explicite), `calendar.py` (chargement/validation du planning, conversion ET→UTC via zoneinfo avec DST), `risk_engine.py` (fonction PURE `macro_context_at` + `MacroGate` injectable, repli UNKNOWN), `generate.py` (génération FRED + FOMC curated, outil hors runtime)
+  - `engine/macro_study.py` : event study Phase A — amplitude/corps/volume par bougie dans fenêtres pré/cœur/post, baseline même jour de semaine + même minute de journée hors jours d'événement, **gate scellé** (cœur ≥ 2× baseline pour FOMC et CPI sur BTC ET ETH 15m)
+  - `FRED_API_KEY` (optionnelle, études/génération uniquement) dans `engine/config.py` + `.env.example` ; exception `.gitignore` pour `data/macro/events.json` (dépendance de production versionnée)
+  - 36 nouveaux tests (DST été/hiver, bornes de fenêtres exactes, bougie 1H contenant l'événement, baseline, gate, failsafe fichier absent/invalide, FRED mocké) — **390/390 passent**
+  - Aucun impact production : rien n'est branché au runner, momentum_v1 inchangé
+- ✅ **Étape 2 — Event study réelle exécutée (2026-09-13) : GATE FAIL → blocage définitivement écarté**. 4 ans (2022-08→2026-09), 225 événements (FRED + FOMC curated), BTC+ETH 15m+1H. Amplitude médiane cœur [T-15,T+30) vs baseline même jour de semaine/minute : BTC 15m FOMC x1.96, CPI x1.84, NFP x1.49, PPI x1.22 ; ETH 15m FOMC x2.44, CPI x1.97, NFP x1.55, PPI x1.25. Volumes x2-3 sur FOMC/CPI ; FOMC post T+30→T+120 x2.1-2.4 (conférence de presse). Lecture : l'élévation de volatilité est RÉELLE et hiérarchisée (FOMC > CPI > NFP >> PPI) mais sous le seuil scellé x2 sur 3 des 4 combinaisons requises — le protocole s'applique tel quel, **aucun ajustement du seuil ni des fenêtres** (le « c'est presque 2 » est exactement le piège que le gate scellé interdit). Conformément à MACRO.md §8 : pas de blocage, au maximum un affichage informatif. Phase B (ablation) sans objet — elle ne servait qu'à arbitrer le blocage.
+
 ### Phase 31 — Moteur de confluence (démarrée 2026-09-01)
 
 Objectif : plusieurs stratégies + confluence multi-dimensionnelle. Spécification de référence : **`CONFLUENCE.md`** (décision utilisateur non négociable : les indicateurs qualifient, seuls des événements structurels déclenchent).

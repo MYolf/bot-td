@@ -31,4 +31,10 @@ Thumbs.db
 .claude/settings.local.json
 
 # Cache de donnees de validation (engine/validation.py)
-data/
+data/*
+# Exception : le planning macro est une dépendance de production versionnée
+# (MACRO.md §4 — zéro appel réseau au runtime). Le reste de data/ (caches
+# d'études, historiques) reste local.
+!data/macro/
+data/macro/*
+!data/macro/events.json

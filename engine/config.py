@@ -45,6 +45,11 @@ class EngineSettings(BaseSettings):
     # bucket positif en brut sur BTC ET ETH ; divise les signaux par ~3).
     engine_min_score: int = Field(default=0, alias="ENGINE_MIN_SCORE")
 
+    # Clé FRED (gratuite) pour la GÉNÉRATION du planning macro et les
+    # études — jamais requise au runtime du moteur (le planning est un
+    # fichier versionné, MACRO.md §4). Optionnelle.
+    fred_api_key: str | None = Field(default=None, alias="FRED_API_KEY")
+
     # Secret partagé avec le backend (jamais loggé, jamais commité).
     tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")
 
