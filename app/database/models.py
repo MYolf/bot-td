@@ -85,6 +85,10 @@ class Signal(Base):
     score_volume: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     score_structure: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     score_htf: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Contexte macro au moment du signal (display-only, MACRO.md §10) :
+    # NULL = aucun événement notable à proximité (tous les signaux antérieurs).
+    macro_level: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    macro_note: Mapped[str | None] = mapped_column(String(100), nullable=True)
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

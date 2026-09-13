@@ -26,6 +26,7 @@ from app.services.discord_service import (
     SignalNotifier,
     closure_notifier,
     notify_closure,
+    provide_macro_notifier,
     provide_notifier,
 )
 from app.signals.scoring import compute_score, present_components
@@ -153,9 +154,22 @@ async def receive_tradingview_signal(
         score=compute_score(signal),
         score_components=present_components(signal),
         trade_number=insert.sequence_number,
+        macro_level=signal.macro_level,
+        macro_note=signal.macro_note,
     )
+    # Macro display-only (MACRO.md §10) : un signal en contexte HIGH/EXTREME
+    # est routé vers le salon dédié (s'il est configuré) au lieu du salon des
+    # signaux — aucune action sur le flux, juste de la visibilité.
+    routing = notifier
+    if signal.macro_level in ("HIGH", "EXTREME"):
+        macro_notifier = provide_macro_notifier()
+        if macro_notifier is not None:
+            logger.info(
+                "Signal en contexte macro %s -> salon dédié", signal.macro_level
+            )
+            routing = macro_notifier
     try:
-        message_id = await notifier.send_signal(embed)
+        message_id = await routing.send_signal(embed)
     except DiscordSendError:
         logger.error(
             "Notification Discord échouée signal_id=%s signal_uid=%s (statut ERROR)",

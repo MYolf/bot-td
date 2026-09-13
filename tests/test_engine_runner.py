@@ -3,10 +3,14 @@
 Dépendances réelles remplacées par des fakes : aucun réseau, aucun envoi.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import engine.runner as runner_module
 from engine.config import EngineSettings
+from engine.macro.models import MacroEvent
+from engine.macro.risk_engine import MacroGate
 from engine.runner import SignalEngine
 from engine.strategy import Candle, SignalResult
 
@@ -347,3 +351,128 @@ async def test_seuil_zero_tout_emis(engine_settings, monkeypatch) -> None:
     await engine.poll_once()
 
     assert len(sender.payloads) == 1
+
+
+# --- Macro display-only (MACRO.md §10) : annotation, jamais blocage ---
+
+# Timestamp du signal fake : candle_close_time = 900 000 ms = 00:15:00Z.
+_TS_SIGNAL = datetime(1970, 1, 1, 0, 15, tzinfo=timezone.utc)
+
+
+def _gate(minutes_offset: float, event_type: str = "CPI") -> MacroGate:
+    """Événement placé à minutes_offset du timestamp du signal fake."""
+    at = _TS_SIGNAL + timedelta(minutes=minutes_offset)
+    return MacroGate([MacroEvent(event_type=event_type, scheduled_at=at)])
+
+
+async def test_macro_extreme_annote_le_payload(engine_settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    # CPI imminent (T-8) : EXTREME, mais le signal part quand même.
+    engine = SignalEngine(engine_settings, fetcher, sender, macro=_gate(8))
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    assert len(sender.payloads) == 1
+    payload = sender.payloads[0]
+    assert payload["macro_level"] == "EXTREME"
+    assert payload["macro_note"] == "CPI dans 8 min"
+
+
+async def test_macro_high_annote_le_payload(engine_settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    # NFP à T-20 : HIGH (entre EXTREME pré = 15 min et HIGH pré = 30 min).
+    engine = SignalEngine(engine_settings, fetcher, sender, macro=_gate(20, "NFP"))
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    payload = sender.payloads[0]
+    assert payload["macro_level"] == "HIGH"
+    assert payload["macro_note"] == "NFP dans 20 min"
+
+
+async def test_macro_low_aucune_annotation(engine_settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    # Événement 5 h plus tard : LOW -> JSON strictement identique à avant.
+    engine = SignalEngine(engine_settings, fetcher, sender, macro=_gate(300))
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    payload = sender.payloads[0]
+    assert "macro_level" not in payload
+    assert "macro_note" not in payload
+
+
+async def test_macro_unknown_aucune_annotation(engine_settings, monkeypatch) -> None:
+    """Failsafe : planning indisponible -> UNKNOWN -> signal normal."""
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    engine = SignalEngine(
+        engine_settings, fetcher, sender, macro=MacroGate.disabled()
+    )
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    payload = sender.payloads[0]
+    assert "macro_level" not in payload
+    assert "macro_note" not in payload
+
+
+async def test_macro_type_hors_perimetre_ignore(engine_settings, monkeypatch) -> None:
+    """PPI exclu de l'affichage (MACRO.md §10) : jamais annoté."""
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    # PPI imminent (serait EXTREME) mais filtré par le périmètre MACRO_TYPES.
+    gate = MacroGate(
+        [MacroEvent(event_type="PPI", scheduled_at=_TS_SIGNAL + timedelta(minutes=8))],
+        types={"FOMC", "CPI", "NFP"},
+    )
+    engine = SignalEngine(engine_settings, fetcher, sender, macro=gate)
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    payload = sender.payloads[0]
+    assert "macro_level" not in payload
+
+
+async def test_sans_gate_payload_inchange(engine_settings, monkeypatch) -> None:
+    """MACRO_ENABLED=false (défaut) : le moteur se comporte exactement comme
+    avant l'existence du Macro Risk Engine."""
+    monkeypatch.setattr(
+        runner_module, "evaluate_momentum_v1", lambda c, p: fake_signal_result()
+    )
+    fetcher = FakeFetcher([make_candles(300), make_candles(301)])
+    sender = FakeSender()
+    engine = SignalEngine(engine_settings, fetcher, sender)
+
+    await engine.poll_once()
+    await engine.poll_once()
+
+    payload = sender.payloads[0]
+    assert set(payload) == {
+        "secret", "strategy", "symbol", "exchange", "timeframe", "action",
+        "price", "stop_loss", "take_profit", "score_trend", "score_momentum",
+        "score_macd", "timestamp",
+    }

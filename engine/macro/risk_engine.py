@@ -99,11 +99,19 @@ class MacroGate:
     """Gate injectable dans SignalEngine (pattern Fetcher/Sender).
 
     - ``MacroGate(events)`` : décision réelle (fonction pure ci-dessus) ;
+    - ``MacroGate(events, types={...})`` : ne retient que ces types
+      (display-only : PPI exclu du périmètre d'affichage, MACRO.md §10) ;
     - ``MacroGate.disabled()`` : planning indisponible -> UNKNOWN partout
       (failsafe) ; momentum_v1 continue sans aucune information macro.
     """
 
-    def __init__(self, events: list[MacroEvent] | None) -> None:
+    def __init__(
+        self,
+        events: list[MacroEvent] | None,
+        types: frozenset[str] | set[str] | None = None,
+    ) -> None:
+        if events is not None and types is not None:
+            events = [e for e in events if e.event_type in types]
         self._events = events
 
     @classmethod

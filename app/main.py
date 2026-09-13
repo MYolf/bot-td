@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
             DiscordService,
             set_be_notifier,
             set_health_notifier,
+            set_macro_notifier,
             set_notifier,
             set_recap_notifier,
             set_sl_notifier,
@@ -88,6 +89,13 @@ async def lifespan(app: FastAPI):
             set_sl_notifier(DiscordService(bot, settings.discord_sl_channel_id))
         if settings.discord_tp_channel_id is not None:
             set_tp_notifier(DiscordService(bot, settings.discord_tp_channel_id))
+        # Notifieur du salon macro : signaux en contexte HIGH/EXTREME (le
+        # routage est fait dans app/api/tradingview.py ; sans ce salon, ils
+        # partent dans le salon des signaux habituel).
+        if settings.discord_macro_channel_id is not None:
+            set_macro_notifier(
+                DiscordService(bot, settings.discord_macro_channel_id)
+            )
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
@@ -178,6 +186,7 @@ async def lifespan(app: FastAPI):
     from app.services.discord_service import (
         set_be_notifier,
         set_health_notifier,
+        set_macro_notifier,
         set_notifier,
         set_recap_notifier,
         set_sl_notifier,
@@ -190,6 +199,7 @@ async def lifespan(app: FastAPI):
     set_be_notifier(None)
     set_sl_notifier(None)
     set_tp_notifier(None)
+    set_macro_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 

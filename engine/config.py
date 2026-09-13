@@ -50,6 +50,21 @@ class EngineSettings(BaseSettings):
     # fichier versionné, MACRO.md §4). Optionnelle.
     fred_api_key: str | None = Field(default=None, alias="FRED_API_KEY")
 
+    # --- Macro Risk Engine (display-only, MACRO.md §10) ---
+    # Le blocage de signaux a été définitivement écarté (gate scellé FAIL,
+    # event study 2026-09-13) : la macro n'AFFICHE JAMAIS un veto, elle
+    # annote seulement les signaux (macro_level/macro_note dans le payload)
+    # quand un événement suivi est à proximité. false = aucune annotation.
+    macro_enabled: bool = Field(default=False, alias="MACRO_ENABLED")
+    # Types affichés (PPI exclu : x1.2 vs baseline = bruit, MACRO.md §8).
+    macro_types: list[str] = Field(
+        default=["FOMC", "CPI", "NFP"], alias="MACRO_TYPES"
+    )
+    # Planning versionné — jamais d'appel réseau au runtime (failsafe §7).
+    macro_events_file: str = Field(
+        default="data/macro/events.json", alias="MACRO_EVENTS_FILE"
+    )
+
     # Secret partagé avec le backend (jamais loggé, jamais commité).
     tradingview_webhook_secret: str = Field(alias="TRADINGVIEW_WEBHOOK_SECRET")
 

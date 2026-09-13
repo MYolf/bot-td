@@ -115,17 +115,18 @@ def load_events(path: Path) -> list[MacroEvent]:
     return events_from_records(records)
 
 
-def load_calendar(path: Path) -> MacroGate:
+def load_calendar(path: Path, types: frozenset[str] | set[str] | None = None) -> MacroGate:
     """Charge le planning et construit le gate.
 
     Fichier absent ou JSON invalide -> gate ``UNKNOWN`` (failsafe MACRO.md
     §7) : le moteur technique continue, la macro est déclarée indisponible.
     Fichier valide mais vide -> gate LOW (calendrier réellement silencieux).
+    ``types`` : restreint le gate à ces types d'événements (display-only).
     """
     records = _read_records(path)
     if records is None:
         return MacroGate.disabled()
-    return MacroGate(events_from_records(records))
+    return MacroGate(events_from_records(records), types)
 
 
 def _read_records(path: Path) -> list | None:

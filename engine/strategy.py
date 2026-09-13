@@ -229,10 +229,17 @@ def build_payload(
     symbol: str,
     timeframe: str,
     secret: str,
+    macro_level: str | None = None,
+    macro_note: str | None = None,
 ) -> dict:
-    """Construit le JSON du webhook (schéma exact de TradingViewSignal)."""
+    """Construit le JSON du webhook (schéma de TradingViewSignal).
+
+    ``macro_level`` / ``macro_note`` (display-only, MACRO.md §10) : ajoutés
+    uniquement si fournis — un signal sans contexte macro notable garde le
+    JSON exact d'avant (rétrocompatibilité totale du schéma).
+    """
     timestamp = datetime.fromtimestamp(result.candle_close_time / 1000, tz=timezone.utc)
-    return {
+    payload = {
         "secret": secret,
         "strategy": STRATEGY_NAME,
         "symbol": symbol,
@@ -247,3 +254,8 @@ def build_payload(
         "score_macd": result.score_macd,
         "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if macro_level is not None:
+        payload["macro_level"] = macro_level
+    if macro_note is not None:
+        payload["macro_note"] = macro_note
+    return payload

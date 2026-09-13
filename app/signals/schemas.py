@@ -33,6 +33,11 @@ class TradingViewSignal(BaseModel):
     score_volume: int | None = None
     score_structure: int | None = None
     score_htf: int | None = None
+    # --- Macro Risk Engine (display-only, MACRO.md §10) ---
+    # Absents = aucun événement macro notable à proximité (comportement
+    # historique inchangé). Le moteur n'envoie que HIGH/EXTREME.
+    macro_level: Literal["LOW", "HIGH", "EXTREME", "UNKNOWN"] | None = None
+    macro_note: str | None = Field(default=None, max_length=100)
 
     @field_validator("strategy", "symbol", "exchange", "timeframe", mode="after")
     @classmethod

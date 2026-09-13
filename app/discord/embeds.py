@@ -213,6 +213,8 @@ def build_signal_embed(
     score: int | None = None,
     score_components: dict[str, int] | None = None,
     trade_number: int | None = None,
+    macro_level: str | None = None,
+    macro_note: str | None = None,
 ) -> discord.Embed:
     """Construit l'embed d'un signal validé (BUY/SELL).
 
@@ -221,6 +223,8 @@ def build_signal_embed(
     composantes. `score_components` : composantes présentes, pour le champ
     « Setup » (indicateurs et points).
     `trade_number` : numéro séquentiel du trade (#16), affiché s'il est connu.
+    `macro_level`/`macro_note` (display-only, MACRO.md §10) : contexte macro
+    HIGH/EXTREME — une ligne d'avertissement factuelle, jamais un blocage.
     """
     is_buy = action == "BUY"
     embed = discord.Embed(
@@ -277,6 +281,15 @@ def build_signal_embed(
         ),
         inline=False,
     )
+    # Macro (display-only) : une seule ligne factuelle, jamais de jargon de
+    # décision (« bloqué », « validé »...) — le signal est toujours émis.
+    if macro_note is not None and macro_level in ("HIGH", "EXTREME"):
+        emoji = "⚠️" if macro_level == "HIGH" else "🔴"
+        embed.add_field(
+            name="Macro",
+            value=f"{emoji} {macro_note} · risque {macro_level}",
+            inline=False,
+        )
     if score_value is not None:
         # Projet.md §40 : jamais présenté comme une probabilité de gain.
         embed.set_footer(text="Score = qualité interne du signal (pas une probabilité de gain)")
@@ -314,6 +327,8 @@ def build_signal_embed_from_row(signal, strategy_name: str) -> discord.Embed:
         score=signal.score,
         score_components=components or None,
         trade_number=signal.sequence_number,
+        macro_level=signal.macro_level,
+        macro_note=signal.macro_note,
     )
 
 

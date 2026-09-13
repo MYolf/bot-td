@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     discord_tp_channel_id: int | None = Field(
         default=None, alias="DISCORD_TP_CHANNEL_ID"
     )
+    # Salon dédié des signaux en contexte macro HIGH/EXTREME (Macro Risk
+    # Engine display-only, MACRO.md §10) : le signal y est routé À LA PLACE
+    # du salon des signaux. Non configuré -> salon des signaux habituel.
+    discord_macro_channel_id: int | None = Field(
+        default=None, alias="DISCORD_MACRO_CHANNEL_ID"
+    )
 
     # --- Récap hebdomadaire du paper trading (vendredi par défaut) ---
     recap_enabled: bool = Field(default=True, alias="RECAP_ENABLED")

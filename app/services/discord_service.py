@@ -72,6 +72,10 @@ _be_notifier: SignalNotifier | None = None
 # partielles). None = salon non configuré.
 _sl_notifier: SignalNotifier | None = None
 _tp_notifier: SignalNotifier | None = None
+# Notifieur du salon macro : signaux en contexte HIGH/EXTREME (Macro Risk
+# Engine display-only, MACRO.md §10). None = salon non configuré (les
+# signaux annotés partent alors dans le salon des signaux habituel).
+_macro_notifier: SignalNotifier | None = None
 
 
 def set_notifier(notifier: SignalNotifier | None) -> None:
@@ -129,6 +133,17 @@ def set_sl_notifier(notifier: SignalNotifier | None) -> None:
 def provide_sl_notifier() -> SignalNotifier | None:
     """Dépendance : notifieur du salon SL (None si non configuré)."""
     return _sl_notifier
+
+
+def set_macro_notifier(notifier: SignalNotifier | None) -> None:
+    """Enregistre le notifieur du salon macro (None = désactivé)."""
+    global _macro_notifier
+    _macro_notifier = notifier
+
+
+def provide_macro_notifier() -> SignalNotifier | None:
+    """Dépendance : notifieur du salon macro (None si non configuré)."""
+    return _macro_notifier
 
 
 def set_tp_notifier(notifier: SignalNotifier | None) -> None:

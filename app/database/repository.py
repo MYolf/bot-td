@@ -127,6 +127,8 @@ class SignalRepository:
             score_volume=signal.score_volume,
             score_structure=signal.score_structure,
             score_htf=signal.score_htf,
+            macro_level=signal.macro_level,
+            macro_note=signal.macro_note,
             signal_timestamp=signal.timestamp,
             received_at=datetime.now(timezone.utc),
             status="VALIDATED",

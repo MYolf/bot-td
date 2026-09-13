@@ -26,12 +26,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import httpx
 
 from engine.binance_client import fetch_closed_candles
 from engine.config import EngineSettings, get_engine_settings
+from engine.macro.calendar import load_calendar
+from engine.macro.models import MacroLevel
+from engine.macro.risk_engine import MacroGate
 from engine.position import PositionTracker, replay_history
 from engine.strategy import (
     Candle,
@@ -60,12 +65,14 @@ class SignalEngine:
         sender: Sender,
         params: MomentumParams | None = None,
         price_sender: Sender | None = None,
+        macro: MacroGate | None = None,
     ) -> None:
         self._settings = settings
         self._fetcher = fetcher
         self._sender = sender
         self._params = params or MomentumParams()
         self._price_sender = price_sender
+        self._macro = macro
         self._last_open_time: dict[str, int] = {}
         self._trackers: dict[str, PositionTracker] = {}
 
@@ -181,11 +188,31 @@ class SignalEngine:
             )
 
     async def _emit(self, symbol: str, result: SignalResult) -> None:
+        # Macro display-only (MACRO.md §10) : le gate NE BLOQUE JAMAIS —
+        # il annote le payload si un événement suivi est à proximité
+        # (HIGH/EXTREME). UNKNOWN (planning indisponible) = pas d'annotation,
+        # le signal part normalement.
+        macro_level: str | None = None
+        macro_note: str | None = None
+        if self._macro is not None:
+            ts = datetime.fromtimestamp(result.candle_close_time / 1000, tz=timezone.utc)
+            context = self._macro.context_at(ts)
+            if context.level in (MacroLevel.HIGH, MacroLevel.EXTREME):
+                macro_level = context.level.value
+                macro_note = context.note
+                logger.info(
+                    "Contexte macro %s symbol=%s : %s",
+                    macro_level,
+                    symbol,
+                    macro_note,
+                )
         payload = build_payload(
             result,
             symbol=symbol,
             timeframe=self._settings.engine_timeframe,
             secret=self._settings.tradingview_webhook_secret,
+            macro_level=macro_level,
+            macro_note=macro_note,
         )
         try:
             response = await self._sender(payload)
@@ -241,7 +268,23 @@ async def _main_async() -> None:
 
             price_sender = price_sender_fn
 
-        engine = SignalEngine(settings, fetcher, sender, price_sender=price_sender)
+        # Macro display-only : planning chargé depuis le fichier versionné
+        # (aucun réseau). Fichier absent/invalide -> gate UNKNOWN -> aucune
+        # annotation, momentum_v1 continue (failsafe MACRO.md §7).
+        macro: MacroGate | None = None
+        if settings.macro_enabled:
+            macro = load_calendar(
+                Path(settings.macro_events_file), frozenset(settings.macro_types)
+            )
+            logger.info(
+                "Macro display-only activé types=%s fichier=%s",
+                settings.macro_types,
+                settings.macro_events_file,
+            )
+
+        engine = SignalEngine(
+            settings, fetcher, sender, price_sender=price_sender, macro=macro
+        )
         await engine.run()
 
 

@@ -36,7 +36,7 @@ Le Macro Risk Engine est un **filtre**, jamais une stratégie directionnelle :
 Heures conventionnelles US (America/New_York) : CPI, NFP, PPI, GDP = 8h30 ;
 FOMC = 14h00.
 
-| Type | EXTREME (bloquant si mode block) | HIGH (avertissement) | Au-delà |
+| Type | EXTREME (annotation, routage salon dédié) | HIGH (annotation, routage salon dédié) | Au-delà |
 |---|---|---|---|
 | FOMC | T−15 → T+45 (la conférence de presse prolonge la fenêtre) | T−60 → T+120 | LOW |
 | CPI, NFP, PPI | T−15 → T+30 | T−30 → T+60 | LOW |
@@ -134,6 +134,15 @@ BTCUSDT **et** ETHUSDT en 15m.
 - Gate KO → **NO-GO définitif du blocage** ; au maximum un affichage
   informatif (HIGH), sans action.
 
+**Résultat (2026-09-13, 4 ans BTC+ETH 15m)** : **GATE KO** — 3 des 4 couples
+sous le seuil ×2,0 (FOMC BTC ×1,96, CPI BTC ×1,84, CPI ETH ×1,97 ; FOMC ETH
+×2,1 seul validé). Protocole scellé appliqué sans ajustement (« presque 2 »
+est le piège classique). Conclusions conservées : hiérarchie réelle
+FOMC > CPI > NFP >> PPI (PPI ~×1,1 = non distinguable du bruit), fenêtre
+post-FOMC étendue justifiée (conférence de presse ×2,1-2,4). Décisions
+utilisateur : blocage définitivement abandonné, display-only FOMC/CPI/NFP
+validé, aucun DXY/US10Y, aucun changement au score Momentum V1.
+
 ## 9. Phase B — Fréquence et ablation
 
 1. Compter les trades momentum_v1 (MIN_SCORE=45) ouverts dans les fenêtres
@@ -149,23 +158,30 @@ BTCUSDT **et** ETHUSDT en 15m.
      (trades bloqués, pertes évitées, gagnants perdus, delta expectancy,
      delta drawdown).
 
-## 10. Phase C — Intégration production (seulement si A validé)
+## 10. Phase C — Intégration production (display-only, décision finale 2026-09-13)
 
-- `MACRO_MODE=display|block`, **défaut = display** (avertissement Discord
-  uniquement, aucun changement du flux de signaux — compatible avec la
-  période d'observation scellée jusqu'au 25/09/2026).
-- Passage éventuel en `block` : uniquement après le 25/09/2026 et lecture du
-  plan vert/rouge de `PLAN_EVALUATION.md`.
-- En mode block, un signal bloqué suit exactement la sémantique
-  `ENGINE_MIN_SCORE` : non émis, position simulée non ouverte, un signal
-  ultérieur de même sens reste émissible + message discret dans le salon
-  logs.
+Le blocage automatique est **définitivement abandonné** (gate KO §8) : la
+seule intégration retenue est le display-only, sans `MACRO_MODE` — il n'existe
+et n'existera pas de mode block.
+
+- `MACRO_ENABLED=true` (engine) : le runner annote chaque signal émis via
+  `macro_context_at` (pure, même code backtest/production, anti-lookahead §6).
+- `MACRO_TYPES` défaut `["FOMC","CPI","NFP"]` (PPI exclu du display, §8).
+- Annotation uniquement si le contexte est HIGH ou EXTREME ; LOW/UNKNOWN ne
+  modifient rien (UNKNOWN = failsafe §7, fichier absent/illisible).
 - Payload webhook : champs optionnels `macro_level` / `macro_note` ;
   schéma backend rétrocompatible.
-- PostgreSQL (Phase C, archivage/observabilité uniquement, **jamais dans le
-  chemin de décision**) : table `macro_events` (clé unique
-  `source:event_type:scheduled_at`, colonnes nullable `forecast`, `previous`,
-  `actual`, `actual_at`) + colonnes `signals.macro_level` / `signals.macro_note`.
+- Backend : colonnes `signals.macro_level` / `signals.macro_note` (migration
+  `f4a9c2d7e1b8`, observabilité uniquement, jamais dans le chemin de
+  décision ; la table `macro_events` prévue initialement n'est pas utile :
+  le planning versionné `data/macro/events.json` suffit).
+- Discord : champ « Macro » dans l'embed de signal (⚠️ HIGH / 🔴 EXTREME,
+  note factuelle) ; un signal HIGH/EXTREME est publié dans le salon dédié
+  `DISCORD_MACRO_CHANNEL_ID` **à la place** du salon des signaux (choix
+  utilisateur 2026-09-13) ; sans salon configuré, il reste dans le salon
+  des signaux habituel.
+- Compatible avec la période d'observation scellée jusqu'au 25/09/2026 :
+  aucun signal n'est bloqué, le score Momentum V1 est inchangé.
 
 ## 11. Compatibilité avec le protocole de validation
 
