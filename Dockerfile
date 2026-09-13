@@ -19,6 +19,9 @@ COPY alembic.ini .
 COPY migrations/ migrations/
 COPY app/ app/
 COPY engine/ engine/
+# Planning macro versionné (dépendance de production du moteur, MACRO.md §4) :
+# uniquement ce fichier — data/cache et autres données locales n'entrent pas.
+COPY data/macro/events.json data/macro/events.json
 
 # Exécution sans privilèges.
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
