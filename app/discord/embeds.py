@@ -32,6 +32,13 @@ def timeframe_label(timeframe: str) -> str:
     return f"{timeframe}m"
 
 
+def timeframe_minutes(timeframe: str) -> int:
+    """Durée d'une bougie en minutes ("15" -> 15, "D" -> 1440)."""
+    if timeframe.upper() == "D":
+        return 1440
+    return int(timeframe)
+
+
 def strategy_label(strategy: str) -> str:
     """Rend la stratégie lisible ("momentum_v1" -> "Momentum V1")."""
     return strategy.replace("_", " ").title()
@@ -313,6 +320,8 @@ def build_advance_embed(
     risk_reward: Decimal | float | str,
     score: int | None = None,
     score_components: dict[str, int] | None = None,
+    expires_in: int | None = None,
+    touch_rate: float | None = None,
 ) -> discord.Embed:
     """Embed d'une PRÉ-ALERTE : niveau limite annoncé avant la clôture.
 
@@ -321,17 +330,33 @@ def build_advance_embed(
     encore en formation), pas de numéro de trade (rien n'est enregistré en
     base), et un avertissement explicite — touché ne signifie pas confirmé
     (étude 4 ans : ~1 touche filtrée sur 2 se confirme).
+
+    Mode anticipatif (ANTICIPATION.md v1.1) : ``expires_in`` (validité en
+    bougies) et ``touch_rate`` (taux de toucher MESURÉ sur 4 ans) sont
+    fournis — le niveau est annoncé dès l'ouverture de la bougie, avec sa
+    durée de validité. Le taux affiché est une fréquence observée, NI une
+    probabilité de gain NI un avantage de prix (fill ≈ neutre).
     """
     is_buy = action == "BUY"
-    embed = discord.Embed(
-        title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
-        color=GREEN if is_buy else RED,
-        description=(
+    if expires_in is not None:
+        description = (
+            "⏳ **Signal à l'avance** — annoncé dès l'ouverture de la bougie.\n"
+            "Placez un ordre **limite** à l'entrée. Le trade ne démarre que si "
+            "le niveau est touché **puis confirmé** à la clôture : un message "
+            "« ✅ Signal validé » suivra, sinon une annulation — ne pas garder "
+            "la position. Sans touche à l'expiration, retirez l'ordre."
+        )
+    else:
+        description = (
             "⏳ **Signal à l'avance** — la bougie est encore en formation.\n"
             "Placez un ordre **limite** à l'entrée : le trade ne démarre que si "
             "le niveau est touché **puis confirmé** à la clôture. Sinon, une "
             "annulation suivra — ne pas garder la position."
-        ),
+        )
+    embed = discord.Embed(
+        title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
+        color=GREEN if is_buy else RED,
+        description=description,
     )
     embed.add_field(name="Strategy", value=strategy_label(strategy), inline=True)
     embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
@@ -370,9 +395,24 @@ def build_advance_embed(
         ),
         inline=False,
     )
-    embed.set_footer(
-        text="Pré-alerte émise avant la clôture — non comptabilisée dans les statistiques"
+    if expires_in is not None:
+        minutes = timeframe_minutes(timeframe) * expires_in
+        embed.add_field(
+            name="Validité",
+            value=f"Expire dans {expires_in} bougie(s) (≈ {minutes} min) si le "
+            "niveau n'est pas touché",
+            inline=False,
+        )
+    footer = (
+        "Pré-alerte émise avant la clôture — non comptabilisée dans les statistiques"
     )
+    if touch_rate is not None:
+        footer = (
+            f"Niveau atteint dans ~{round(touch_rate * 100)} % des cas (4 ans de "
+            "données) — fréquence observée, ni probabilité de gain ni avantage "
+            "de prix · " + footer
+        )
+    embed.set_footer(text=footer)
     return embed
 
 
@@ -399,6 +439,76 @@ def build_advance_invalidated_embed(
         name="Direction", value="LONG" if is_buy else "SHORT", inline=True
     )
     embed.add_field(name="Niveau touché", value=format_price(level), inline=True)
+    embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
+    return embed
+
+
+def build_advance_confirmed_embed(
+    *, symbol: str, timeframe: str, action: str, level: Decimal | float | str
+) -> discord.Embed:
+    """Embed « Signal validé » : niveau touché PUIS confirmé à la clôture.
+
+    Amendement v1.1 (ANTICIPATION.md) : envoyé en PLUS du signal officiel
+    (qui suit le pipeline normal et part dans le salon des signaux). Si
+    l'ordre limite de l'utilisateur a été rempli au niveau, il est en
+    position — l'avantage de fill mesuré est ≈ neutre (aucune promesse).
+    """
+    is_buy = action == "BUY"
+    embed = discord.Embed(
+        title=f"✅ Signal validé — {symbol}",
+        color=GREEN,
+        description=(
+            "Le niveau annoncé a été **touché** puis **confirmé** à la clôture : "
+            "le signal officiel vient d'être envoyé (salon des signaux).\n"
+            "Si votre ordre limite a été rempli, vous êtes en position — tenez "
+            "le trade comme un signal normal."
+        ),
+    )
+    embed.add_field(
+        name="Direction", value="LONG" if is_buy else "SHORT", inline=True
+    )
+    embed.add_field(name="Niveau d'entrée", value=format_price(level), inline=True)
+    embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
+    embed.set_footer(
+        text="Avantage d'entrée mesuré ≈ neutre (4 ans de données) — "
+        "l'intérêt est l'anticipation, pas un meilleur prix"
+    )
+    return embed
+
+
+def build_advance_expired_embed(
+    *,
+    symbol: str,
+    timeframe: str,
+    action: str,
+    level: Decimal | float | str,
+    expires_in: int | None = None,
+) -> discord.Embed:
+    """Embed d'expiration : le niveau n'a pas été touché à l'horizon.
+
+    L'ordre limite de l'utilisateur n'a pas été exécuté : il faut le
+    retirer pour ne pas laisser d'ordre en attente sur un niveau périmé.
+    """
+    is_buy = action == "BUY"
+    embed = discord.Embed(
+        title=f"⌛ Pré-alerte expirée — {symbol}",
+        color=GREY,
+        description=(
+            "Le niveau annoncé n'a **pas été atteint** dans le délai de "
+            "validité.\nSi un ordre limite était placé : **retirez-le** "
+            "(il n'a pas été exécuté)."
+        ),
+    )
+    embed.add_field(
+        name="Direction", value="LONG" if is_buy else "SHORT", inline=True
+    )
+    embed.add_field(name="Niveau non atteint", value=format_price(level), inline=True)
+    if expires_in is not None:
+        embed.add_field(
+            name="Validité écoulée",
+            value=f"{expires_in} bougie(s)",
+            inline=True,
+        )
     embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
     return embed
 

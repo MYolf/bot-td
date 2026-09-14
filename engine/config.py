@@ -52,6 +52,16 @@ class EngineSettings(BaseSettings):
     # envoyée vers /internal/prealert — l'utilisateur place un ordre limite.
     # Aucun impact sur le pipeline officiel. false (défaut) = désactivé.
     engine_advance_enabled: bool = Field(default=False, alias="ENGINE_ADVANCE_ENABLED")
+    # Mode : "reactive" (annonce quand le prix approche à EPS du niveau,
+    # comportement historique) ou "anticipative" (annonce à l'OUVERTURE de la
+    # bougie si le niveau est atteignable à k×ATR, ANTICIPATION.md v1.1 —
+    # OOS validée 2026-09-14, taux de toucher ~70 % à (0,50 ; 2)).
+    engine_advance_mode: str = Field(default="reactive", alias="ENGINE_ADVANCE_MODE")
+    # Mode anticipatif uniquement : seuil d'atteignabilité k en ATR14
+    # (figé par l'étude, ANTICIPATION.md §5).
+    engine_advance_k_atr: float = Field(default=0.50, alias="ENGINE_ADVANCE_K_ATR")
+    # Mode anticipatif uniquement : durée de validité du niveau en bougies.
+    engine_advance_horizon: int = Field(default=2, alias="ENGINE_ADVANCE_HORIZON")
     # Distance d'annonce relative au niveau (0.0015 = 0.15 %, valeur de l'étude).
     engine_advance_eps: float = Field(default=0.0015, alias="ENGINE_ADVANCE_EPS")
     # Endpoint interne du backend ; vide = aucun envoi (feature muette).

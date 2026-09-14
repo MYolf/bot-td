@@ -248,7 +248,9 @@ async def notify_advance(alert, notifier: SignalNotifier | None) -> None:
     if notifier is None:
         return
     from app.discord.embeds import (
+        build_advance_confirmed_embed,
         build_advance_embed,
+        build_advance_expired_embed,
         build_advance_invalidated_embed,
     )
 
@@ -258,6 +260,21 @@ async def notify_advance(alert, notifier: SignalNotifier | None) -> None:
             timeframe=alert.timeframe,
             action=alert.action,
             level=alert.price,
+        )
+    elif alert.kind == "confirmed":
+        embed = build_advance_confirmed_embed(
+            symbol=alert.symbol,
+            timeframe=alert.timeframe,
+            action=alert.action,
+            level=alert.price,
+        )
+    elif alert.kind == "expired":
+        embed = build_advance_expired_embed(
+            symbol=alert.symbol,
+            timeframe=alert.timeframe,
+            action=alert.action,
+            level=alert.price,
+            expires_in=alert.expires_in,
         )
     else:
         components = {
@@ -280,6 +297,8 @@ async def notify_advance(alert, notifier: SignalNotifier | None) -> None:
             risk_reward=alert.risk_reward,
             score=sum(components.values()) if components else None,
             score_components=components or None,
+            expires_in=alert.expires_in,
+            touch_rate=alert.touch_rate,
         )
     try:
         await notifier.send_signal(embed)

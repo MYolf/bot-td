@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.indicators import ema
+from engine.indicators import atr, ema
 from engine.strategy import Candle, MomentumParams, compute_series
 from engine.touch_study import (
     FormingState,
@@ -40,6 +40,13 @@ from engine.touch_study import (
 )
 
 ADVANCE_STRATEGY = "momentum_v1"
+
+# Affichage honnête du mode anticipatif (ANTICIPATION.md §7, amendement v1.1) :
+# taux de toucher mesuré à (k=0,50 ; N=2) sur 4 ans IS+OOS poolés
+# (BTC 74,1 %, ETH 69,5 %). Ce n'est NI une probabilité de gain, NI un
+# avantage de prix (fill ≈ neutre : +0,14/+0,18 % médian, coût
+# d'annulation symétrique).
+ANTICIPATIVE_TOUCH_RATE = 0.70
 
 
 @dataclass(frozen=True)
@@ -183,6 +190,127 @@ def build_invalidation_payload(
     """JSON de l'annulation (niveau touché, bougie non confirmée à la clôture)."""
     return {
         "kind": "invalidated",
+        "secret": secret,
+        "strategy": ADVANCE_STRATEGY,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "action": action,
+        "price": level,
+    }
+
+
+# --------------------------------------------- mode anticipatif (ANTICIPATION.md) --
+
+
+def atr_closed(closed: list[Candle], length: int = 14) -> float | None:
+    """ATR des bougies FERMÉES (dernière valeur). Anti-lookahead : la bougie
+    en formation n'entre jamais dans ce calcul (spec §4)."""
+    if len(closed) < length + 1:
+        return None
+    value = atr(
+        [c.high for c in closed],
+        [c.low for c in closed],
+        [c.close for c in closed],
+        length,
+    )[-1]
+    return value
+
+
+def plan_anticipative(
+    closed: list[Candle],
+    forming: Candle,
+    params: MomentumParams,
+    min_score: int = 0,
+    k_atr: float = 0.50,
+) -> AdvancePlan | None:
+    """Y a-t-il un niveau P* à annoncer DÈS L'OUVERTURE de ``forming`` ?
+
+    Différence avec ``plan_advance`` (mode réactif) : aucune condition de
+    proximité — le niveau est annoncé à l'ouverture s'il est ATTEIGNABLE,
+    c'est-à-dire si la distance |P* − open| <= ``k_atr`` × ATR14 des bougies
+    fermées (spec ANTICIPATION.md §2). Seul l'OPEN de la bougie en formation
+    est lu (jamais son high/low, spec §4).
+
+    OOS validée (2026-09-14) : à (k=0,50 ; N=2) le niveau est touché dans
+    ~70 % des cas (BTC 74,1 %, ETH 69,5 %, IS+OOS poolés).
+    """
+    st = forming_state(closed, params)
+    if st is None:
+        return None
+    atr_value = atr_closed(closed)
+    if atr_value is None or atr_value <= 0:
+        return None
+    for direction, cond in (("BUY", bullish_at), ("SELL", bearish_at)):
+        if cond(st, st.prev_close, params):
+            continue  # transition impossible (déjà entièrement vrai)
+        level = trigger_level(st, params, direction)
+        if level is None:
+            continue
+        score_trend, score_momentum, score_macd = score_parts(st, level, params)
+        if score_trend + score_momentum + score_macd < min_score:
+            continue
+        if abs(level - forming.open) > k_atr * atr_value:
+            continue  # inatteignable au seuil k : pas d'annonce
+        if direction == "BUY":
+            stop_loss = level * (1 - params.sl_pct)
+            take_profit = level * (1 + params.tp_pct)
+        else:
+            stop_loss = level * (1 + params.sl_pct)
+            take_profit = level * (1 - params.tp_pct)
+        return AdvancePlan(
+            action=direction,
+            level=level,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk_reward=params.tp_pct / params.sl_pct,
+            score_trend=score_trend,
+            score_momentum=score_momentum,
+            score_macd=score_macd,
+        )
+    return None
+
+
+def build_anticipative_payload(
+    plan: AdvancePlan,
+    *,
+    symbol: str,
+    timeframe: str,
+    secret: str,
+    horizon: int,
+) -> dict:
+    """JSON de la pré-alerte anticipative (annonce à l'ouverture)."""
+    payload = build_advance_payload(
+        plan, symbol=symbol, timeframe=timeframe, secret=secret
+    )
+    payload["kind"] = "advance"
+    payload["expires_in"] = horizon
+    payload["touch_rate"] = ANTICIPATIVE_TOUCH_RATE
+    return payload
+
+
+def build_confirmed_payload(
+    *, symbol: str, timeframe: str, secret: str, action: str, level: float
+) -> dict:
+    """JSON du message « signal validé » (touché ET confirmé à la clôture,
+    amendement v1.1 — envoyé en plus du signal officiel)."""
+    return {
+        "kind": "confirmed",
+        "secret": secret,
+        "strategy": ADVANCE_STRATEGY,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "action": action,
+        "price": level,
+    }
+
+
+def build_expiration_payload(
+    *, symbol: str, timeframe: str, secret: str, action: str, level: float
+) -> dict:
+    """JSON de l'expiration (niveau jamais touché à l'horizon : retirer
+    l'ordre limite)."""
+    return {
+        "kind": "expired",
         "secret": secret,
         "strategy": ADVANCE_STRATEGY,
         "symbol": symbol,

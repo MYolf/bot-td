@@ -119,6 +119,82 @@ class TestInvalidated:
         assert "déchargez la position" in embed.description
 
 
+class TestAnticipatif:
+    """Mode anticipatif : expires_in + touch_rate rendus dans l'embed."""
+
+    def test_champs_validite_et_taux(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert",
+            json=_advance_payload(expires_in=2, touch_rate=0.70),
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "sent"}
+        (embed,) = advance_notifier.sent
+        champs = {f.name: f.value for f in embed.fields}
+        assert "Expire dans 2 bougie(s) (≈ 30 min)" in champs["Validité"]
+        assert embed.footer.text and "~70 %" in embed.footer.text
+        assert "ni probabilité de gain" in embed.footer.text
+        # Description anticipative : message « Signal validé » annoncé.
+        assert "Signal validé" in embed.description
+
+    def test_expires_in_invalide_422(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert", json=_advance_payload(expires_in=0)
+        )
+        assert response.status_code == 422
+        assert advance_notifier.sent == []
+
+    def test_touch_rate_hors_bornes_422(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert", json=_advance_payload(expires_in=2, touch_rate=1.5)
+        )
+        assert response.status_code == 422
+        assert advance_notifier.sent == []
+
+
+class TestConfirmed:
+    def test_embed_signal_valide(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert",
+            json=_advance_payload(kind="confirmed", price=77000.5),
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "sent"}
+        (embed,) = advance_notifier.sent
+        assert embed.title == "✅ Signal validé — BTCUSDT"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Direction"] == "LONG"
+        assert champs["Niveau d'entrée"] == "77,000.50"
+        # Honnêteté : l'avantage de fill est annoncé ≈ neutre.
+        assert embed.footer.text and "neutre" in embed.footer.text
+
+
+class TestExpired:
+    def test_embed_expiration(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert",
+            json=_advance_payload(
+                kind="expired", action="SELL", price=77000.5, expires_in=2
+            ),
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "sent"}
+        (embed,) = advance_notifier.sent
+        assert embed.title == "⌛ Pré-alerte expirée — BTCUSDT"
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Direction"] == "SHORT"
+        assert champs["Niveau non atteint"] == "77,000.50"
+        assert champs["Validité écoulée"] == "2 bougie(s)"
+        assert "retirez-le" in embed.description
+
+    def test_kind_inconnu_422(self, client, advance_notifier):
+        response = client.post(
+            "/internal/prealert", json=_advance_payload(kind="autre")
+        )
+        assert response.status_code == 422
+        assert advance_notifier.sent == []
+
+
 class TestSansSalon:
     def test_notifieur_absent_statut_ignore(self, client):
         set_advance_notifier(None)

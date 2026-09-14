@@ -34,8 +34,12 @@ import httpx
 
 from engine.advance import (
     build_advance_payload,
+    build_anticipative_payload,
+    build_confirmed_payload,
+    build_expiration_payload,
     build_invalidation_payload,
     plan_advance,
+    plan_anticipative,
 )
 from engine.binance_client import fetch_closed_candles, fetch_forming_candle
 from engine.config import EngineSettings, get_engine_settings
@@ -92,6 +96,12 @@ class SignalEngine:
         # par le signal réel » de « touché mais non confirmé ».
         self._advance_pending: dict[str, dict] = {}
         self._advance_emitted: dict[str, tuple[int, str]] = {}
+        # Mode anticipatif (ANTICIPATION.md) : une annonce active par
+        # (symbole, direction), valable horizon bougies ; et mémoire des
+        # émissions officielles récentes (open_time, action) pour la
+        # résolution — confirmé / annulé / expiré / invalidé.
+        self._antic_pending: dict[tuple[str, str], dict] = {}
+        self._emissions_seen: dict[str, set[tuple[int, str]]] = {}
 
     async def poll_once(self) -> None:
         """Un cycle complet sur tous les symboles configurés."""
@@ -115,8 +125,7 @@ class SignalEngine:
                 # Pas de nouvelle bougie fermée : seule la surveillance « à
                 # l'avance » travaille (elle lit la bougie en formation,
                 # donc à chaque cycle, pas seulement aux clôtures).
-                await self._resolve_advance(symbol, candles)
-                await self._announce_advance(symbol, candles)
+                await self._advance_cycle(symbol, candles)
                 continue
 
             self._last_open_time[symbol] = last.open_time
@@ -135,8 +144,7 @@ class SignalEngine:
                     len(candles),
                     self._trackers[symbol].position,
                 )
-                await self._resolve_advance(symbol, candles)
-                await self._announce_advance(symbol, candles)
+                await self._advance_cycle(symbol, candles)
                 continue
 
             tracker = self._trackers[symbol]
@@ -191,10 +199,28 @@ class SignalEngine:
                         result.candle_open_time,
                         result.action,
                     )
+                    # Mémoire des émissions récentes (résolution du mode
+                    # anticipatif) — bornée pour ne jamais croître.
+                    seen = self._emissions_seen.setdefault(symbol, set())
+                    seen.add((result.candle_open_time, result.action))
+                    if len(seen) > 64:
+                        keep = sorted(seen)[-32:]
+                        seen.clear()
+                        seen.update(keep)
             # 5) Signaux à l'avance : résoudre la pré-alerte éventuelle de la
             #    bougie qui vient de fermer, puis sonder la bougie en formation.
-            await self._resolve_advance(symbol, candles)
-            await self._announce_advance(symbol, candles)
+            await self._advance_cycle(symbol, candles)
+
+    async def _advance_cycle(self, symbol: str, closed: list[Candle]) -> None:
+        """Dispatch signaux à l'avance selon ENGINE_ADVANCE_MODE (spec
+        ANTICIPATION.md §8) : reactive (comportement historique) ou
+        anticipative (annonce à l'ouverture, validité N bougies)."""
+        if self._settings.engine_advance_mode == "anticipative":
+            await self._resolve_anticipative(symbol, closed)
+            await self._announce_anticipative(symbol, closed)
+        else:
+            await self._resolve_advance(symbol, closed)
+            await self._announce_advance(symbol, closed)
 
     async def _announce_advance(self, symbol: str, closed: list[Candle]) -> None:
         """Surveille la bougie EN FORMATION : annonce le niveau P* s'il approche.
@@ -339,6 +365,184 @@ class SignalEngine:
             pending["action"],
             pending["level"],
             candle.open_time,
+        )
+
+    # ------------------------------------- mode anticipatif (ANTICIPATION.md) --
+
+    async def _announce_anticipative(self, symbol: str, closed: list[Candle]) -> None:
+        """Annonce le niveau P* DÈS L'OUVERTURE de la bougie en formation.
+
+        Anti-spam (spec §3) : une seule annonce active par direction ; le
+        niveau annoncé ne dérive pas — pas de re-annonce tant que l'annonce
+        active n'est pas résolue (confirmée / annulée / expirée / invalidée).
+        Best-effort, aucune incidence sur le pipeline officiel.
+        """
+        if self._advance_sender is None or self._forming_fetcher is None:
+            return
+        tracker = self._trackers.get(symbol)
+        if tracker is None:
+            return  # premier relevé pas encore fait : état inconnu
+        try:
+            forming = await self._forming_fetcher(
+                symbol, self._settings.engine_timeframe
+            )
+        except Exception:
+            logger.exception(
+                "Récupération de la bougie en formation échouée symbol=%s (ignoré)",
+                symbol,
+            )
+            return
+        if forming is None:
+            return
+        last_closed_open = self._last_open_time.get(symbol)
+        if last_closed_open is None or forming.open_time <= last_closed_open:
+            return  # bougie incohérente avec l'état du moteur
+        plan = plan_anticipative(
+            closed,
+            forming,
+            self._params,
+            min_score=self._settings.engine_min_score,
+            k_atr=self._settings.engine_advance_k_atr,
+        )
+        if plan is None:
+            return
+        if (symbol, plan.action) in self._antic_pending:
+            return  # une annonce est déjà active dans cette direction
+        if not tracker.would_fill(plan.action):
+            # Fidélité pyramiding=0 : aucun signal officiel ne serait émis
+            # dans ce sens (position déjà ouverte) — l'annonce serait du bruit.
+            return
+        payload = build_anticipative_payload(
+            plan,
+            symbol=symbol,
+            timeframe=self._settings.engine_timeframe,
+            secret=self._settings.tradingview_webhook_secret,
+            horizon=self._settings.engine_advance_horizon,
+        )
+        try:
+            await self._advance_sender(payload)
+        except Exception:
+            logger.exception(
+                "Envoi pré-alerte anticipative échoué symbol=%s action=%s (ignoré, "
+                "sans conséquence : le signal officiel restera émis à la clôture)",
+                symbol,
+                plan.action,
+            )
+            return
+        self._antic_pending[(symbol, plan.action)] = {
+            "open_time": forming.open_time,
+            "action": plan.action,
+            "level": plan.level,
+        }
+        logger.info(
+            "Pré-alerte anticipative envoyée symbol=%s action=%s niveau=%.8f "
+            "bougie=%s horizon=%d",
+            symbol,
+            plan.action,
+            plan.level,
+            forming.open_time,
+            self._settings.engine_advance_horizon,
+        )
+
+    async def _resolve_anticipative(self, symbol: str, closed: list[Candle]) -> None:
+        """Résout chaque annonce anticipative active (spec §3, sémantique
+        exacte de l'étude reach_study) :
+
+        - bougie touchée + signal officiel même sens à sa clôture -> message
+          « signal validé » (amendement v1.1) ;
+        - bougie touchée sans signal officiel -> annulation (décharger) ;
+        - signal officiel même sens SANS touche -> silence (consommée,
+          l'ordre limite n'a pas été rempli) ;
+        - signal officiel opposé avant toute touche -> annulation (scénario
+          invalidé) ;
+        - horizon écoulé sans touche -> expiration (retirer l'ordre limite).
+        """
+        horizon = self._settings.engine_advance_horizon
+        seen = self._emissions_seen.get(symbol, set())
+        for key in [
+            k for k in self._antic_pending if k[0] == symbol
+        ]:
+            pending = self._antic_pending[key]
+            action = pending["action"]
+            opposite = "SELL" if action == "BUY" else "BUY"
+            window = [c for c in closed if c.open_time >= pending["open_time"]]
+            resolved = False
+            for offset, candle in enumerate(window[:horizon]):
+                touched = (
+                    candle.high >= pending["level"]
+                    if action == "BUY"
+                    else candle.low <= pending["level"]
+                )
+                emitted_same = (candle.open_time, action) in seen
+                emitted_opposite = (candle.open_time, opposite) in seen
+                if touched:
+                    await self._send_anticipative_resolution(
+                        symbol,
+                        pending,
+                        kind="confirmed" if emitted_same else "invalidated",
+                    )
+                    resolved = True
+                    break
+                if emitted_same:
+                    logger.info(
+                        "Pré-alerte anticipative consommée symbol=%s action=%s "
+                        "bougie=%s (signal officiel sans touche : silence)",
+                        symbol,
+                        action,
+                        candle.open_time,
+                    )
+                    resolved = True
+                    break
+                if emitted_opposite:
+                    await self._send_anticipative_resolution(
+                        symbol, pending, kind="invalidated"
+                    )
+                    resolved = True
+                    break
+            if resolved:
+                del self._antic_pending[key]
+                continue
+            if len(window) >= horizon:
+                # Horizon écoulé sans touche : expiration.
+                await self._send_anticipative_resolution(
+                    symbol, pending, kind="expired"
+                )
+                del self._antic_pending[key]
+
+    async def _send_anticipative_resolution(
+        self, symbol: str, pending: dict, kind: str
+    ) -> None:
+        if self._advance_sender is None:
+            return
+        builder = {
+            "confirmed": build_confirmed_payload,
+            "expired": build_expiration_payload,
+            "invalidated": build_invalidation_payload,
+        }[kind]
+        payload = builder(
+            symbol=symbol,
+            timeframe=self._settings.engine_timeframe,
+            secret=self._settings.tradingview_webhook_secret,
+            action=pending["action"],
+            level=pending["level"],
+        )
+        try:
+            await self._advance_sender(payload)
+        except Exception:
+            logger.exception(
+                "Envoi de résolution de pré-alerte (%s) échoué symbol=%s "
+                "bougie=%s (ignoré, best-effort)",
+                kind,
+                symbol,
+                pending["open_time"],
+            )
+            return
+        logger.info(
+            "Pré-alerte anticipative résolue (%s) symbol=%s action=%s niveau=%.8f",
+            kind,
+            symbol,
+            pending["action"],
+            pending["level"],
         )
 
     async def _send_price(self, symbol: str, candle: Candle) -> None:

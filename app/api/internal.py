@@ -62,18 +62,24 @@ class PriceUpdate(BaseModel):
 class AdvanceAlert(BaseModel):
     """Pré-alerte du moteur local (signaux à l'avance, engine/advance.py).
 
-    ``kind="advance"`` : le prix approche du niveau exact P* qui confirmerait
-    un signal momentum_v1 à la clôture — embed d'ordre limite. ``kind=
-    "invalidated"`` : le niveau a été touché mais la bougie n'a pas confirmé —
-    embed d'annulation (décharger la position si rempli).
+    ``kind="advance"`` : le niveau exact P* qui confirmerait un signal
+    momentum_v1 à la clôture est annoncé — embed d'ordre limite. Mode
+    anticipatif (ANTICIPATION.md v1.1) : l'annonce part à l'OUVERTURE de la
+    bougie si le niveau est atteignable à k×ATR, avec ``expires_in``
+    (validité en bougies) et ``touch_rate`` (taux de toucher mesuré sur
+    4 ans, affichage honnête — ni probabilité de gain, ni avantage de prix).
+    ``kind="invalidated"`` : niveau touché non confirmé (décharger).
+    ``kind="confirmed"`` : niveau touché ET confirmé (« signal validé »,
+    envoyé en plus du signal officiel). ``kind="expired"`` : niveau jamais
+    touché à l'horizon (retirer l'ordre limite).
 
     Volontairement AUCUNE écriture en base : pas de signal_uid, pas de
     numéro de trade, pas de paper trading — le signal officiel (le cas
-    échéant) suivra le pipeline webhook normal à la clôture.
+    échéant) suit le pipeline webhook normal à la clôture.
     """
 
     secret: str = Field(min_length=1)
-    kind: Literal["advance", "invalidated"]
+    kind: Literal["advance", "invalidated", "confirmed", "expired"]
     strategy: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     timeframe: str = Field(min_length=1)
@@ -85,6 +91,8 @@ class AdvanceAlert(BaseModel):
     score_trend: int | None = Field(default=None, ge=0)
     score_momentum: int | None = Field(default=None, ge=0)
     score_macd: int | None = Field(default=None, ge=0)
+    expires_in: int | None = Field(default=None, ge=1)  # bougies (anticipatif)
+    touch_rate: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("symbol", mode="after")
     @classmethod

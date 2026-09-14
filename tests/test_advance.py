@@ -14,9 +14,13 @@ import engine.runner as runner_module
 from engine.advance import (
     AdvancePlan,
     build_advance_payload,
+    build_anticipative_payload,
+    build_confirmed_payload,
+    build_expiration_payload,
     build_invalidation_payload,
     forming_state,
     plan_advance,
+    plan_anticipative,
 )
 from engine.config import EngineSettings
 from engine.runner import SignalEngine
@@ -351,3 +355,322 @@ async def test_envoi_echoue_pas_de_pending(
     await engine.poll_once()
     await engine.poll_once()
     assert engine._advance_pending == {}
+
+
+# ------------------------------------------------- mode anticipatif (v1.1) --
+
+
+@pytest.fixture
+def antic_settings(monkeypatch) -> EngineSettings:
+    monkeypatch.setenv("ENGINE_SYMBOLS", '["BTCUSDT"]')
+    monkeypatch.setenv("ENGINE_TIMEFRAME", "15")
+    monkeypatch.setenv("ENGINE_POLL_SECONDS", "1")
+    monkeypatch.setenv("ENGINE_CANDLE_LIMIT", "300")
+    monkeypatch.setenv("TRADINGVIEW_WEBHOOK_SECRET", "secret-test")
+    monkeypatch.setenv("ENGINE_ADVANCE_MODE", "anticipative")
+    return EngineSettings(_env_file=None)
+
+
+def _forming_open(open_time: int, open_: float, high: float | None = None) -> Candle:
+    """Bougie en formation : seul l'OPEN compte pour plan_anticipative."""
+    return Candle(
+        open_time=open_time,
+        close_time=open_time + 900_000 - 1,
+        open=open_,
+        high=high if high is not None else open_ * 1.001,
+        low=open_ * 0.999,
+        close=open_,
+        volume=1.0,
+    )
+
+
+class TestPlanAnticipative:
+    def test_plan_si_niveau_atteignable_des_l_ouverture(self):
+        params = MomentumParams()
+        candles, _, level = _trouve_contexte_buy()
+        forming = _forming_open(candles[-1].open_time + 900_000, level)
+        plan = plan_anticipative(candles, forming, params, min_score=0)
+        assert plan is not None
+        assert plan.action == "BUY"
+        assert abs(plan.level - level) / level < 1e-6
+
+    def test_aucun_plan_si_distance_superieure_a_k_atr(self):
+        params = MomentumParams()
+        candles, _, level = _trouve_contexte_buy()
+        # Open à -15 % : inatteignable à 0,5 ATR.
+        forming = _forming_open(
+            candles[-1].open_time + 900_000, level * 0.85, high=level * 1.01
+        )
+        assert plan_anticipative(candles, forming, params) is None
+
+    def test_seul_l_open_compte_anti_lookahead(self):
+        """Le high de la bougie en formation dépasse le niveau, mais l'open
+        est loin : PAS d'annonce anticipative (spec §4 — le high/low ne doit
+        jamais entrer dans la décision)."""
+        params = MomentumParams()
+        candles, _, level = _trouve_contexte_buy()
+        forming = _forming_open(
+            candles[-1].open_time + 900_000, level * 0.85, high=level * 1.02
+        )
+        assert plan_anticipative(candles, forming, params, k_atr=0.5) is None
+        # Le même open avec un seuil k démesuré passe : c'est bien la
+        # distance open->niveau qui bloque, pas le high.
+        assert (
+            plan_anticipative(candles, forming, params, min_score=0, k_atr=1e6)
+            is not None
+        )
+
+    def test_filtre_score_au_niveau(self):
+        params = MomentumParams()
+        candles, _, level = _trouve_contexte_buy()
+        forming = _forming_open(candles[-1].open_time + 900_000, level)
+        assert plan_anticipative(candles, forming, params, min_score=56) is None
+
+    def test_historique_insuffisant_aucun_plan(self):
+        forming = _forming_open(1_900_000, 101.0)
+        assert plan_anticipative(make_candles(50), forming, MomentumParams()) is None
+
+
+class TestPayloadsAnticipatifs:
+    def test_payload_anticipatif_puis_confirme_puis_expire(self):
+        plan = AdvancePlan(
+            action="BUY",
+            level=101.0,
+            stop_loss=99.99,
+            take_profit=103.02,
+            risk_reward=2.0,
+            score_trend=20,
+            score_momentum=20,
+            score_macd=15,
+        )
+        payload = build_anticipative_payload(
+            plan, symbol="BTCUSDT", timeframe="15", secret="s3cret", horizon=2
+        )
+        assert payload["kind"] == "advance"
+        assert payload["expires_in"] == 2
+        assert payload["touch_rate"] == pytest.approx(0.70)
+        confirme = build_confirmed_payload(
+            symbol="BTCUSDT",
+            timeframe="15",
+            secret="s3cret",
+            action="BUY",
+            level=101.0,
+        )
+        assert confirme["kind"] == "confirmed"
+        assert confirme["price"] == 101.0
+        expire = build_expiration_payload(
+            symbol="BTCUSDT",
+            timeframe="15",
+            secret="s3cret",
+            action="BUY",
+            level=101.0,
+        )
+        assert expire["kind"] == "expired"
+
+
+async def test_anticipatif_annonce_unique_puis_invalidation(
+    antic_settings, monkeypatch, plan_buy
+) -> None:
+    """Annonce à l'ouverture -> pas de doublon -> bougie touchée non
+    confirmée à la clôture -> une annulation."""
+    plans = [plan_buy, None, None, None]
+    monkeypatch.setattr(
+        runner_module,
+        "plan_anticipative",
+        lambda *a, **k: plans.pop(0) if plans else None,
+    )
+    monkeypatch.setattr(runner_module, "evaluate_momentum_v1", lambda c, p: None)
+    base = make_candles(300)
+    dernier_open = base[-1].open_time
+    fermee = Candle(
+        open_time=dernier_open + 900_000,
+        close_time=dernier_open + 2 * 900_000 - 1,
+        open=100.0,
+        high=101.5,
+        low=99.5,
+        close=100.5,
+        volume=1.0,
+    )
+    fetcher = FakeFetcher([base, base, base + [fermee], base + [fermee]])
+    forming_fetcher = FakeFormingFetcher(
+        [
+            _forming_open(fermee.open_time, 100.5),
+            _forming_open(fermee.open_time, 100.6),
+            _forming_open(fermee.open_time + 900_000, 100.2),
+            _forming_open(fermee.open_time + 900_000, 100.2),
+        ]
+    )
+    advance_sender = FakeSender()
+    engine = SignalEngine(
+        antic_settings,
+        fetcher,
+        FakeSender(),
+        advance_sender=advance_sender,
+        forming_fetcher=forming_fetcher,
+    )
+
+    await engine.poll_once()  # premier relevé + annonce à l'ouverture
+    await engine.poll_once()  # même bougie : pas de nouvelle annonce (anti-spam)
+    await engine.poll_once()  # clôture touchée, non confirmée -> annulation
+    await engine.poll_once()  # plus rien
+
+    annonces = [p for p in advance_sender.payloads if p["kind"] == "advance"]
+    annulations = [p for p in advance_sender.payloads if p["kind"] == "invalidated"]
+    assert len(annonces) == 1
+    assert annonces[0]["expires_in"] == 2
+    assert annonces[0]["touch_rate"] == pytest.approx(0.70)
+    assert annonces[0]["price"] == pytest.approx(101.0)
+    assert len(annulations) == 1
+    assert engine._antic_pending == {}
+
+
+async def test_anticipatif_confirme_message_signal_valide(
+    antic_settings, monkeypatch, plan_buy
+) -> None:
+    """Bougie touchée + signal officiel même sens à sa clôture : message
+    « confirmed » en PLUS du signal officiel (amendement v1.1)."""
+    plans = [plan_buy, None, None]
+    monkeypatch.setattr(
+        runner_module,
+        "plan_anticipative",
+        lambda *a, **k: plans.pop(0) if plans else None,
+    )
+    base = make_candles(300)
+    dernier_open = base[-1].open_time
+    fermee = Candle(
+        open_time=dernier_open + 900_000,
+        close_time=dernier_open + 2 * 900_000 - 1,
+        open=100.0,
+        high=101.5,
+        low=99.5,
+        close=101.2,
+        volume=1.0,
+    )
+    import dataclasses
+
+    from tests.test_engine_runner import fake_signal_result
+
+    result = dataclasses.replace(
+        fake_signal_result("BUY"), candle_open_time=fermee.open_time
+    )
+    monkeypatch.setattr(runner_module, "evaluate_momentum_v1", lambda c, p: result)
+    fetcher = FakeFetcher([base, base + [fermee]])
+    advance_sender = FakeSender()
+    sender = FakeSender()
+    engine = SignalEngine(
+        antic_settings,
+        fetcher,
+        sender,
+        advance_sender=advance_sender,
+        forming_fetcher=FakeFormingFetcher([_forming_open(fermee.open_time, 100.5)]),
+    )
+    await engine.poll_once()  # annonce
+    await engine.poll_once()  # clôture : signal officiel + confirmed
+
+    confirmed = [p for p in advance_sender.payloads if p["kind"] == "confirmed"]
+    assert len(confirmed) == 1
+    assert confirmed[0]["price"] == pytest.approx(101.0)
+    assert len(sender.payloads) == 1  # le signal officiel reste émis
+    assert engine._antic_pending == {}
+
+
+async def test_anticipatif_expiration_a_l_horizon(
+    antic_settings, monkeypatch, plan_buy
+) -> None:
+    """Niveau jamais touché : silence à la 1re clôture, expiration après
+    horizon (= 2) clôtures."""
+    plans = [plan_buy, None, None, None]
+    monkeypatch.setattr(
+        runner_module,
+        "plan_anticipative",
+        lambda *a, **k: plans.pop(0) if plans else None,
+    )
+    monkeypatch.setattr(runner_module, "evaluate_momentum_v1", lambda c, p: None)
+    base = make_candles(300)
+    dernier_open = base[-1].open_time
+    t1 = Candle(
+        open_time=dernier_open + 900_000,
+        close_time=dernier_open + 2 * 900_000 - 1,
+        open=100.0,
+        high=100.2,
+        low=99.8,
+        close=100.0,
+        volume=1.0,
+    )
+    t2 = Candle(
+        open_time=dernier_open + 2 * 900_000,
+        close_time=dernier_open + 3 * 900_000 - 1,
+        open=100.0,
+        high=100.3,
+        low=99.7,
+        close=100.0,
+        volume=1.0,
+    )
+    fetcher = FakeFetcher([base, base + [t1], base + [t1, t2]])
+    advance_sender = FakeSender()
+    engine = SignalEngine(
+        antic_settings,
+        fetcher,
+        FakeSender(),
+        advance_sender=advance_sender,
+        forming_fetcher=FakeFormingFetcher(
+            [
+                _forming_open(t1.open_time, 100.5),
+                _forming_open(t2.open_time, 100.1),
+                _forming_open(t2.open_time + 900_000, 100.0),
+            ]
+        ),
+    )
+    await engine.poll_once()  # annonce
+    await engine.poll_once()  # T1 clôturée, non touchée : silence (1 < 2)
+    assert [p["kind"] for p in advance_sender.payloads] == ["advance"]
+    await engine.poll_once()  # T2 clôturée : horizon écoulé -> expiration
+    kinds = [p["kind"] for p in advance_sender.payloads]
+    assert kinds == ["advance", "expired"]
+    assert advance_sender.payloads[1]["price"] == pytest.approx(101.0)
+    assert engine._antic_pending == {}
+
+
+async def test_anticipatif_silence_si_signal_officiel_sans_touche(
+    antic_settings, monkeypatch, plan_buy
+) -> None:
+    """Signal officiel même sens mais niveau jamais touché (ordre limite non
+    rempli) : la pré-alerte est consommée en silence."""
+    plans = [plan_buy, None, None]
+    monkeypatch.setattr(
+        runner_module,
+        "plan_anticipative",
+        lambda *a, **k: plans.pop(0) if plans else None,
+    )
+    base = make_candles(300)
+    dernier_open = base[-1].open_time
+    fermee = Candle(  # high 100.5 < niveau 101 : jamais touchée
+        open_time=dernier_open + 900_000,
+        close_time=dernier_open + 2 * 900_000 - 1,
+        open=100.0,
+        high=100.5,
+        low=99.5,
+        close=100.4,
+        volume=1.0,
+    )
+    import dataclasses
+
+    from tests.test_engine_runner import fake_signal_result
+
+    result = dataclasses.replace(
+        fake_signal_result("BUY"), candle_open_time=fermee.open_time
+    )
+    monkeypatch.setattr(runner_module, "evaluate_momentum_v1", lambda c, p: result)
+    fetcher = FakeFetcher([base, base + [fermee]])
+    advance_sender = FakeSender()
+    engine = SignalEngine(
+        antic_settings,
+        fetcher,
+        FakeSender(),
+        advance_sender=advance_sender,
+        forming_fetcher=FakeFormingFetcher([_forming_open(fermee.open_time, 100.5)]),
+    )
+    await engine.poll_once()  # annonce
+    await engine.poll_once()  # signal officiel sans touche : silence
+    assert [p["kind"] for p in advance_sender.payloads] == ["advance"]
+    assert engine._antic_pending == {}
