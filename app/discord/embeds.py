@@ -296,6 +296,113 @@ def build_signal_embed(
     return embed
 
 
+# --- Signaux à l'avance (pré-alertes moteur, engine/advance.py) ---
+
+ORANGE = 0xE67E22  # annulation de pré-alerte
+
+
+def build_advance_embed(
+    *,
+    action: str,
+    symbol: str,
+    strategy: str,
+    timeframe: str,
+    entry_price: Decimal | float | str,
+    stop_loss: Decimal | float | str,
+    take_profit: Decimal | float | str,
+    risk_reward: Decimal | float | str,
+    score: int | None = None,
+    score_components: dict[str, int] | None = None,
+) -> discord.Embed:
+    """Embed d'une PRÉ-ALERTE : niveau limite annoncé avant la clôture.
+
+    Même présentation qu'un signal (l'utilisateur se positionne comme pour un
+    signal), avec les différences essentielles : pas d'heure (la bougie est
+    encore en formation), pas de numéro de trade (rien n'est enregistré en
+    base), et un avertissement explicite — touché ne signifie pas confirmé
+    (étude 4 ans : ~1 touche filtrée sur 2 se confirme).
+    """
+    is_buy = action == "BUY"
+    embed = discord.Embed(
+        title=f"{'🟢 LONG SIGNAL' if is_buy else '🔴 SHORT SIGNAL'} — {symbol}",
+        color=GREEN if is_buy else RED,
+        description=(
+            "⏳ **Signal à l'avance** — la bougie est encore en formation.\n"
+            "Placez un ordre **limite** à l'entrée : le trade ne démarre que si "
+            "le niveau est touché **puis confirmé** à la clôture. Sinon, une "
+            "annulation suivra — ne pas garder la position."
+        ),
+    )
+    embed.add_field(name="Strategy", value=strategy_label(strategy), inline=True)
+    embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
+    embed.add_field(
+        name="Entry", value=f"{format_price(entry_price)} (limite)", inline=True
+    )
+    embed.add_field(name="Stop Loss", value=format_price(stop_loss), inline=True)
+    embed.add_field(
+        name="Take Profit",
+        value=(
+            f"{format_price(take_profit)}\n"
+            f"{format_pips(symbol, entry_price, take_profit)}"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="Risk/Reward", value=format_risk_reward(risk_reward), inline=True
+    )
+    score_value = (
+        score_sur_100(score, score_components) if score is not None else None
+    )
+    if score_value is not None:
+        embed.add_field(name="Signal Score", value=score_value, inline=True)
+    lignes_setup = setup_lines(strategy, score_components)
+    if lignes_setup:
+        embed.add_field(name="Setup", value="\n".join(lignes_setup), inline=False)
+    tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
+    be_trigger = scaled_targets(action, entry_price, stop_loss, multiples=(1.5,))[0]
+    embed.add_field(
+        name="Sorties partielles (suggestion)",
+        value=(
+            f"TP1 : {format_price(tp1)} (+1R · {format_pips(symbol, entry_price, tp1)})\n"
+            f"TP2 : {format_price(tp2)} (+2R · {format_pips(symbol, entry_price, tp2)})\n"
+            f"TP3 : {format_price(tp3)} (+3R · {format_pips(symbol, entry_price, tp3)})\n"
+            f"BE : SL → entrée à {format_price(be_trigger)} (+1,5R)"
+        ),
+        inline=False,
+    )
+    embed.set_footer(
+        text="Pré-alerte émise avant la clôture — non comptabilisée dans les statistiques"
+    )
+    return embed
+
+
+def build_advance_invalidated_embed(
+    *, symbol: str, timeframe: str, action: str, level: Decimal | float | str
+) -> discord.Embed:
+    """Embed d'annulation : niveau touché mais bougie non confirmée à la clôture.
+
+    C'est le message le plus important du cycle : si l'ordre limite de
+    l'utilisateur a été rempli, il doit décharger la position (étude 4 ans :
+    décharge médiane ≈ −0,1 %, 70-84 % des cas < 0,2 %).
+    """
+    is_buy = action == "BUY"
+    embed = discord.Embed(
+        title=f"❌ Pré-alerte annulée — {symbol}",
+        color=ORANGE,
+        description=(
+            "Le niveau a été **touché** mais la bougie n'a **pas confirmé** le "
+            "signal à la clôture.\n"
+            "Si votre ordre limite a été rempli : **déchargez la position**."
+        ),
+    )
+    embed.add_field(
+        name="Direction", value="LONG" if is_buy else "SHORT", inline=True
+    )
+    embed.add_field(name="Niveau touché", value=format_price(level), inline=True)
+    embed.add_field(name="Timeframe", value=timeframe_label(timeframe), inline=True)
+    return embed
+
+
 # --- Phase 20 : embeds des commandes slash ---
 
 BLUE = 0x3498DB  # listes

@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
         from app.discord.bot import create_bot, run_bot
         from app.services.discord_service import (
             DiscordService,
+            set_advance_notifier,
             set_be_notifier,
             set_health_notifier,
             set_macro_notifier,
@@ -96,6 +97,13 @@ async def lifespan(app: FastAPI):
             set_macro_notifier(
                 DiscordService(bot, settings.discord_macro_channel_id)
             )
+        # Notifieur des pré-alertes (signaux à l'avance du moteur local) :
+        # sans salon dédié, elles partent dans le salon des signaux.
+        advance_channel = (
+            settings.discord_advance_channel_id or settings.discord_signals_channel_id
+        )
+        if advance_channel is not None:
+            set_advance_notifier(DiscordService(bot, advance_channel))
         logger.info("Démarrage du bot Discord en tâche de fond")
     else:
         logger.info("Bot Discord désactivé (DISCORD_ENABLED=false)")
@@ -184,6 +192,7 @@ async def lifespan(app: FastAPI):
             pass
         logger.info("Bot Discord arrêté")
     from app.services.discord_service import (
+        set_advance_notifier,
         set_be_notifier,
         set_health_notifier,
         set_macro_notifier,
@@ -200,6 +209,7 @@ async def lifespan(app: FastAPI):
     set_sl_notifier(None)
     set_tp_notifier(None)
     set_macro_notifier(None)
+    set_advance_notifier(None)
     await dispose_engine()
     logger.info("Application arrêtée")
 

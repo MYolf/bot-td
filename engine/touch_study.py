@@ -130,12 +130,14 @@ def bearish_at(st: FormingState, price: float, p: MomentumParams) -> bool:
     return trend and macd and rsi_ok
 
 
-def score_at(st: FormingState, price: float, p: MomentumParams) -> int:
-    """Score de qualité (barème Phase 26) évalué au prix provisoire ``price``.
+def score_parts(
+    st: FormingState, price: float, p: MomentumParams
+) -> tuple[int, int, int]:
+    """Composantes du score (barème Phase 26) au prix provisoire ``price``.
 
     Miroir exact du scoring de ``evaluate_at`` (engine/strategy.py), en
     formes fermées : permet de savoir À L'AVANCE si le niveau P* passerait
-    le filtre ENGINE_MIN_SCORE.
+    le filtre ENGINE_MIN_SCORE. Retourne (tendance, momentum, MACD).
     """
     ema50, ema200 = _ema_pair(st, price, p)
     trend_up, trend_down = ema50 > ema200, ema50 < ema200
@@ -149,7 +151,12 @@ def score_at(st: FormingState, price: float, p: MomentumParams) -> int:
     hist_now = line - (a9 * line + (1 - a9) * st.macd_signal_prev)
     hist_prev = st.macd_line_prev - st.macd_signal_prev
     score_macd = 15 if abs(hist_now) > abs(hist_prev) else 8
-    return score_trend + score_momentum + score_macd
+    return score_trend, score_momentum, score_macd
+
+
+def score_at(st: FormingState, price: float, p: MomentumParams) -> int:
+    """Score total au prix provisoire ``price`` (voir ``score_parts``)."""
+    return sum(score_parts(st, price, p))
 
 
 def trigger_level(

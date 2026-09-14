@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     discord_macro_channel_id: int | None = Field(
         default=None, alias="DISCORD_MACRO_CHANNEL_ID"
     )
+    # Salon dédié des pré-alertes (signaux à l'avance du moteur local :
+    # niveau limite annoncé pendant la bougie en formation + annulation si
+    # touché non confirmé). Non configuré -> salon des signaux habituel.
+    discord_advance_channel_id: int | None = Field(
+        default=None, alias="DISCORD_ADVANCE_CHANNEL_ID"
+    )
 
     # --- Récap hebdomadaire du paper trading (vendredi par défaut) ---
     recap_enabled: bool = Field(default=True, alias="RECAP_ENABLED")

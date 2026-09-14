@@ -104,3 +104,20 @@ async def send_price_update(
         f"timeframe={payload.get('timeframe')} open_time={payload.get('open_time')}"
     )
     return await _post_json(client, price_url, payload, context)
+
+
+async def send_advance_alert(
+    client: httpx.AsyncClient,
+    advance_url: str,
+    payload: dict,
+) -> dict:
+    """POST une pré-alerte (ou son annulation) vers /internal/prealert.
+
+    Best-effort : une pré-alerte perdue ne casse rien (le signal officiel
+    reste émis à la clôture). Même mécanique de retry que les signaux.
+    """
+    context = (
+        f"pre-alert kind={payload.get('kind')} symbol={payload.get('symbol')} "
+        f"timeframe={payload.get('timeframe')} action={payload.get('action')}"
+    )
+    return await _post_json(client, advance_url, payload, context)

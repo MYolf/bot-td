@@ -32,7 +32,12 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from engine.binance_client import fetch_closed_candles
+from engine.advance import (
+    build_advance_payload,
+    build_invalidation_payload,
+    plan_advance,
+)
+from engine.binance_client import fetch_closed_candles, fetch_forming_candle
 from engine.config import EngineSettings, get_engine_settings
 from engine.macro.calendar import load_calendar
 from engine.macro.models import MacroLevel
@@ -46,13 +51,15 @@ from engine.strategy import (
     evaluate_momentum_v1,
     total_score,
 )
-from engine.webhook_client import send_price_update, send_signal
+from engine.webhook_client import send_advance_alert, send_price_update, send_signal
 
 logger = logging.getLogger(__name__)
 
 # Signature des dépendances injectables (tests) :
 Fetcher = Callable[[str, str, int], Awaitable[list[Candle]]]
 Sender = Callable[[dict], Awaitable[dict]]
+# Bougie en formation (signaux à l'avance) : None si pas de bougie ouverte.
+AdvanceFetcher = Callable[[str, str], Awaitable[Candle | None]]
 
 
 class SignalEngine:
@@ -66,6 +73,8 @@ class SignalEngine:
         params: MomentumParams | None = None,
         price_sender: Sender | None = None,
         macro: MacroGate | None = None,
+        advance_sender: Sender | None = None,
+        forming_fetcher: AdvanceFetcher | None = None,
     ) -> None:
         self._settings = settings
         self._fetcher = fetcher
@@ -73,8 +82,16 @@ class SignalEngine:
         self._params = params or MomentumParams()
         self._price_sender = price_sender
         self._macro = macro
+        self._advance_sender = advance_sender
+        self._forming_fetcher = forming_fetcher
         self._last_open_time: dict[str, int] = {}
         self._trackers: dict[str, PositionTracker] = {}
+        # Signaux à l'avance : pré-alerte en attente de résolution par symbole
+        # {open_time de la bougie annoncée, action, niveau} ; et dernière
+        # émission officielle (open_time, action) pour distinguer « confirmé
+        # par le signal réel » de « touché mais non confirmé ».
+        self._advance_pending: dict[str, dict] = {}
+        self._advance_emitted: dict[str, tuple[int, str]] = {}
 
     async def poll_once(self) -> None:
         """Un cycle complet sur tous les symboles configurés."""
@@ -95,7 +112,12 @@ class SignalEngine:
             last = candles[-1]
             previous_open = self._last_open_time.get(symbol)
             if previous_open == last.open_time:
-                continue  # aucune nouvelle bougie fermée
+                # Pas de nouvelle bougie fermée : seule la surveillance « à
+                # l'avance » travaille (elle lit la bougie en formation,
+                # donc à chaque cycle, pas seulement aux clôtures).
+                await self._resolve_advance(symbol, candles)
+                await self._announce_advance(symbol, candles)
+                continue
 
             self._last_open_time[symbol] = last.open_time
             if previous_open is None:
@@ -113,6 +135,8 @@ class SignalEngine:
                     len(candles),
                     self._trackers[symbol].position,
                 )
+                await self._resolve_advance(symbol, candles)
+                await self._announce_advance(symbol, candles)
                 continue
 
             tracker = self._trackers[symbol]
@@ -131,34 +155,191 @@ class SignalEngine:
 
             # 3) Transition sur la nouvelle bougie fermée ?
             result = evaluate_momentum_v1(candles, self._params)
-            if result is None:
-                continue
-            # 3bis) Filtre qualité (ENGINE_MIN_SCORE) : une transition filtrée
-            # n'est ni émise ni ouverte en simulation — un signal postérieur
-            # de meilleure qualité dans le même sens restera émissible.
-            score = total_score(result)
-            if score < self._settings.engine_min_score:
-                logger.info(
-                    "Transition %s filtrée symbol=%s score=%d < %d (ENGINE_MIN_SCORE)",
-                    result.action,
-                    symbol,
-                    score,
-                    self._settings.engine_min_score,
-                )
-                continue
-            # 4) Fidélité TradingView : n'émettre que si un ordre simulé
-            #    s'exécuterait (plat ou renversement ; pyramiding = 0).
-            if not tracker.would_fill(result.action):
-                logger.info(
-                    "Transition %s ignorée symbol=%s (position %s déjà ouverte, "
-                    "pyramiding=0 côté TradingView)",
-                    result.action,
-                    symbol,
-                    tracker.position.side if tracker.position else "aucune",
-                )
-                continue
-            tracker.open(result.action, result.entry, result.stop_loss, result.take_profit)
-            await self._emit(symbol, result)
+            if result is not None:
+                # 3bis) Filtre qualité (ENGINE_MIN_SCORE) : une transition
+                # filtrée n'est ni émise ni ouverte en simulation — un signal
+                # postérieur de meilleure qualité dans le même sens restera
+                # émissible.
+                score = total_score(result)
+                if score < self._settings.engine_min_score:
+                    logger.info(
+                        "Transition %s filtrée symbol=%s score=%d < %d (ENGINE_MIN_SCORE)",
+                        result.action,
+                        symbol,
+                        score,
+                        self._settings.engine_min_score,
+                    )
+                # 4) Fidélité TradingView : n'émettre que si un ordre simulé
+                #    s'exécuterait (plat ou renversement ; pyramiding = 0).
+                elif not tracker.would_fill(result.action):
+                    logger.info(
+                        "Transition %s ignorée symbol=%s (position %s déjà ouverte, "
+                        "pyramiding=0 côté TradingView)",
+                        result.action,
+                        symbol,
+                        tracker.position.side if tracker.position else "aucune",
+                    )
+                else:
+                    tracker.open(
+                        result.action, result.entry, result.stop_loss, result.take_profit
+                    )
+                    await self._emit(symbol, result)
+                    # Mémorisé APRÈS un envoi réussi uniquement : c'est ce que
+                    # la résolution des pré-alertes compare (signal officiel vu
+                    # par le backend == pré-alerte confirmée).
+                    self._advance_emitted[symbol] = (
+                        result.candle_open_time,
+                        result.action,
+                    )
+            # 5) Signaux à l'avance : résoudre la pré-alerte éventuelle de la
+            #    bougie qui vient de fermer, puis sonder la bougie en formation.
+            await self._resolve_advance(symbol, candles)
+            await self._announce_advance(symbol, candles)
+
+    async def _announce_advance(self, symbol: str, closed: list[Candle]) -> None:
+        """Surveille la bougie EN FORMATION : annonce le niveau P* s'il approche.
+
+        Best-effort et purement informatif : aucune incidence sur le pipeline
+        officiel (pas de position simulée, pas de signal_uid). Une seule
+        annonce par bougie en formation ; l'état des indicateurs est pris
+        sur les bougies fermées (anti-repainting).
+        """
+        if self._advance_sender is None or self._forming_fetcher is None:
+            return
+        tracker = self._trackers.get(symbol)
+        if tracker is None:
+            return  # premier relevé pas encore fait : état inconnu
+        try:
+            forming = await self._forming_fetcher(
+                symbol, self._settings.engine_timeframe
+            )
+        except Exception:
+            logger.exception(
+                "Récupération de la bougie en formation échouée symbol=%s (ignoré)",
+                symbol,
+            )
+            return
+        if forming is None:
+            return
+        last_closed_open = self._last_open_time.get(symbol)
+        if last_closed_open is None or forming.open_time <= last_closed_open:
+            return  # bougie incohérente avec l'état du moteur
+        pending = self._advance_pending.get(symbol)
+        if pending is not None and pending["open_time"] == forming.open_time:
+            return  # déjà annoncée pour cette bougie
+        plan = plan_advance(
+            closed,
+            forming,
+            self._params,
+            min_score=self._settings.engine_min_score,
+            eps=self._settings.engine_advance_eps,
+        )
+        if plan is None:
+            return
+        if not tracker.would_fill(plan.action):
+            # Fidélité pyramiding=0 : aucun signal officiel ne serait émis
+            # dans ce sens (position déjà ouverte) — l'annonce serait du bruit.
+            return
+        payload = build_advance_payload(
+            plan,
+            symbol=symbol,
+            timeframe=self._settings.engine_timeframe,
+            secret=self._settings.tradingview_webhook_secret,
+        )
+        try:
+            await self._advance_sender(payload)
+        except Exception:
+            logger.exception(
+                "Envoi pré-alerte échoué symbol=%s action=%s (ignoré, sans "
+                "conséquence : le signal officiel restera émis à la clôture)",
+                symbol,
+                plan.action,
+            )
+            return
+        self._advance_pending[symbol] = {
+            "open_time": forming.open_time,
+            "action": plan.action,
+            "level": plan.level,
+        }
+        logger.info(
+            "Pré-alerte envoyée symbol=%s action=%s niveau=%.8f bougie=%s",
+            symbol,
+            plan.action,
+            plan.level,
+            forming.open_time,
+        )
+
+    async def _resolve_advance(self, symbol: str, closed: list[Candle]) -> None:
+        """Clôture le cycle d'une pré-alerte quand sa bougie est fermée.
+
+        - signal officiel émis pour cette bougie et ce sens -> confirmé,
+          silence (l'embed officiel a déjà tout dit) ;
+        - niveau touché sans signal officiel -> annulation envoyée
+          (l'ordre limite de l'utilisateur a pu être rempli : il faut
+          décharger) ;
+        - niveau jamais touché -> silence (ordre limite jamais exécuté).
+        """
+        pending = self._advance_pending.get(symbol)
+        if pending is None:
+            return
+        candle = next(
+            (c for c in closed if c.open_time == pending["open_time"]), None
+        )
+        if candle is None:
+            return  # la bougie annoncée est encore en formation
+        del self._advance_pending[symbol]
+        if self._advance_emitted.get(symbol) == (
+            candle.open_time,
+            pending["action"],
+        ):
+            logger.info(
+                "Pré-alerte confirmée symbol=%s action=%s bougie=%s (signal "
+                "officiel émis, pas d'annulation)",
+                symbol,
+                pending["action"],
+                candle.open_time,
+            )
+            return
+        touched = (
+            candle.high >= pending["level"]
+            if pending["action"] == "BUY"
+            else candle.low <= pending["level"]
+        )
+        if not touched:
+            logger.info(
+                "Pré-alerte non touchée symbol=%s action=%s bougie=%s (silence)",
+                symbol,
+                pending["action"],
+                candle.open_time,
+            )
+            return
+        if self._advance_sender is None:
+            return
+        payload = build_invalidation_payload(
+            symbol=symbol,
+            timeframe=self._settings.engine_timeframe,
+            secret=self._settings.tradingview_webhook_secret,
+            action=pending["action"],
+            level=pending["level"],
+        )
+        try:
+            await self._advance_sender(payload)
+        except Exception:
+            logger.exception(
+                "Envoi d'annulation de pré-alerte échoué symbol=%s bougie=%s "
+                "(ignoré — rappeler manuellement de décharger la position)",
+                symbol,
+                candle.open_time,
+            )
+            return
+        logger.info(
+            "Pré-alerte annulée symbol=%s action=%s niveau=%.8f bougie=%s "
+            "(touché non confirmé à la clôture)",
+            symbol,
+            pending["action"],
+            pending["level"],
+            candle.open_time,
+        )
 
     async def _send_price(self, symbol: str, candle: Candle) -> None:
         """POSTe une bougie fermée vers /internal/prices (best-effort).
@@ -268,6 +449,30 @@ async def _main_async() -> None:
 
             price_sender = price_sender_fn
 
+        # Signaux à l'avance : la bougie en formation est sondée à chaque
+        # cycle ; une pré-alerte part vers /internal/prealert si le prix
+        # approche du niveau P* qui confirmerait momentum_v1 à la clôture.
+        advance_sender: Sender | None = None
+        forming_fetcher: AdvanceFetcher | None = None
+        if settings.engine_advance_enabled and settings.engine_advance_url:
+            advance_url = settings.engine_advance_url
+
+            async def advance_sender_fn(payload: dict) -> dict:
+                return await send_advance_alert(client, advance_url, payload)
+
+            async def forming_fetcher_fn(
+                symbol: str, timeframe: str
+            ) -> Candle | None:
+                return await fetch_forming_candle(client, symbol, timeframe)
+
+            advance_sender = advance_sender_fn
+            forming_fetcher = forming_fetcher_fn
+            logger.info(
+                "Signaux à l'avance activés eps=%.4f url=%s",
+                settings.engine_advance_eps,
+                advance_url,
+            )
+
         # Macro display-only : planning chargé depuis le fichier versionné
         # (aucun réseau). Fichier absent/invalide -> gate UNKNOWN -> aucune
         # annotation, momentum_v1 continue (failsafe MACRO.md §7).
@@ -283,7 +488,13 @@ async def _main_async() -> None:
             )
 
         engine = SignalEngine(
-            settings, fetcher, sender, price_sender=price_sender, macro=macro
+            settings,
+            fetcher,
+            sender,
+            price_sender=price_sender,
+            macro=macro,
+            advance_sender=advance_sender,
+            forming_fetcher=forming_fetcher,
         )
         await engine.run()
 

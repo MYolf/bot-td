@@ -76,6 +76,9 @@ _tp_notifier: SignalNotifier | None = None
 # Engine display-only, MACRO.md §10). None = salon non configuré (les
 # signaux annotés partent alors dans le salon des signaux habituel).
 _macro_notifier: SignalNotifier | None = None
+# Notifieur des pré-alertes (signaux à l'avance, engine/advance.py) :
+# pré-alerte + annulation « touché non confirmé ». None = aucun envoi.
+_advance_notifier: SignalNotifier | None = None
 
 
 def set_notifier(notifier: SignalNotifier | None) -> None:
@@ -152,6 +155,17 @@ def set_tp_notifier(notifier: SignalNotifier | None) -> None:
     _tp_notifier = notifier
 
 
+def set_advance_notifier(notifier: SignalNotifier | None) -> None:
+    """Enregistre le notifieur des pré-alertes (None = désactivé)."""
+    global _advance_notifier
+    _advance_notifier = notifier
+
+
+def provide_advance_notifier() -> SignalNotifier | None:
+    """Dépendance : notifieur des pré-alertes (None si non configuré)."""
+    return _advance_notifier
+
+
 def provide_tp_notifier() -> SignalNotifier | None:
     """Dépendance : notifieur du salon TP (None si non configuré)."""
     return _tp_notifier
@@ -219,5 +233,59 @@ async def notify_tp_progress(alert, notifier: SignalNotifier | None) -> None:
             "Notification TP%d échouée position_id=%s symbol=%s (ignoré)",
             alert.level,
             alert.position_id,
+            alert.symbol,
+        )
+
+
+async def notify_advance(alert, notifier: SignalNotifier | None) -> None:
+    """Publie une pré-alerte (ou son annulation) du moteur local.
+
+    ``alert`` est le corps validé de POST /internal/prealert (typage en str
+    pour éviter une dépendance api -> services -> embeds ici). Best-effort :
+    une pré-alerte perdue ne casse rien — le signal officiel reste émis à la
+    clôture de la bougie.
+    """
+    if notifier is None:
+        return
+    from app.discord.embeds import (
+        build_advance_embed,
+        build_advance_invalidated_embed,
+    )
+
+    if alert.kind == "invalidated":
+        embed = build_advance_invalidated_embed(
+            symbol=alert.symbol,
+            timeframe=alert.timeframe,
+            action=alert.action,
+            level=alert.price,
+        )
+    else:
+        components = {
+            field: value
+            for field, value in (
+                ("score_trend", alert.score_trend),
+                ("score_momentum", alert.score_momentum),
+                ("score_macd", alert.score_macd),
+            )
+            if value is not None
+        }
+        embed = build_advance_embed(
+            action=alert.action,
+            symbol=alert.symbol,
+            strategy=alert.strategy,
+            timeframe=alert.timeframe,
+            entry_price=alert.price,
+            stop_loss=alert.stop_loss,
+            take_profit=alert.take_profit,
+            risk_reward=alert.risk_reward,
+            score=sum(components.values()) if components else None,
+            score_components=components or None,
+        )
+    try:
+        await notifier.send_signal(embed)
+    except DiscordSendError:
+        logger.error(
+            "Notification de pré-alerte échouée kind=%s symbol=%s (ignoré)",
+            alert.kind,
             alert.symbol,
         )

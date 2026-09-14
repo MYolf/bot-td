@@ -14,10 +14,10 @@ import logging
 import secrets as py_secrets
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings, get_settings
@@ -26,9 +26,11 @@ from app.paper_trading.engine import PaperTradingEngine, provide_paper_engine
 from app.services.discord_service import (
     SignalNotifier,
     closure_notifier,
+    notify_advance,
     notify_be,
     notify_closure,
     notify_tp_progress,
+    provide_advance_notifier,
     provide_be_notifier,
     provide_tp_notifier,
 )
@@ -55,6 +57,82 @@ class PriceUpdate(BaseModel):
     @classmethod
     def to_upper(cls, value: str) -> str:
         return value.strip().upper()
+
+
+class AdvanceAlert(BaseModel):
+    """Pré-alerte du moteur local (signaux à l'avance, engine/advance.py).
+
+    ``kind="advance"`` : le prix approche du niveau exact P* qui confirmerait
+    un signal momentum_v1 à la clôture — embed d'ordre limite. ``kind=
+    "invalidated"`` : le niveau a été touché mais la bougie n'a pas confirmé —
+    embed d'annulation (décharger la position si rempli).
+
+    Volontairement AUCUNE écriture en base : pas de signal_uid, pas de
+    numéro de trade, pas de paper trading — le signal officiel (le cas
+    échéant) suivra le pipeline webhook normal à la clôture.
+    """
+
+    secret: str = Field(min_length=1)
+    kind: Literal["advance", "invalidated"]
+    strategy: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    timeframe: str = Field(min_length=1)
+    action: Literal["BUY", "SELL"]
+    price: float = Field(gt=0)  # niveau P* annoncé (ou touché si annulation)
+    stop_loss: float | None = Field(default=None, gt=0)
+    take_profit: float | None = Field(default=None, gt=0)
+    risk_reward: float | None = Field(default=None, gt=0)
+    score_trend: int | None = Field(default=None, ge=0)
+    score_momentum: int | None = Field(default=None, ge=0)
+    score_macd: int | None = Field(default=None, ge=0)
+
+    @field_validator("symbol", mode="after")
+    @classmethod
+    def to_upper(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def bracket_exige_pour_annonce(self) -> "AdvanceAlert":
+        if self.kind == "advance" and (
+            self.stop_loss is None or self.take_profit is None
+        ):
+            raise ValueError("stop_loss et take_profit requis pour kind=advance")
+        return self
+
+
+@router.post("/internal/prealert", status_code=200)
+async def receive_prealert(
+    alert: AdvanceAlert,
+    settings: Annotated[Settings, Depends(get_settings)],
+    notifier: Annotated[SignalNotifier | None, Depends(provide_advance_notifier)],
+) -> dict:
+    logger.info(
+        "Pre-alert received kind=%s symbol=%s timeframe=%s action=%s",
+        alert.kind,
+        alert.symbol,
+        alert.timeframe,
+        alert.action,
+    )
+
+    # --- Authentification (même secret partagé que le webhook TradingView) ---
+    if not py_secrets.compare_digest(alert.secret, settings.tradingview_webhook_secret):
+        logger.warning("Pre-alert rejected: invalid secret")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # --- Validation métier : liste blanche des symboles ---
+    if alert.symbol not in settings.allowed_symbols:
+        logger.warning("Pre-alert rejected: symbol not allowed symbol=%s", alert.symbol)
+        return {"status": "rejected", "reason": "symbol_not_allowed"}
+
+    # Heartbeat : une pré-alerte prouve aussi que le moteur est vivant.
+    record_price_update()
+
+    if notifier is None:
+        logger.info("Pre-alert ignorée : salon non configuré")
+        return {"status": "ignored", "reason": "no_channel"}
+
+    await notify_advance(alert, notifier)
+    return {"status": "sent"}
 
 
 @router.post("/internal/prices", status_code=200)

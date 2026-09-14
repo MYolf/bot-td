@@ -98,3 +98,23 @@ async def fetch_closed_candles(
     candles = await fetch_candles(client, symbol, timeframe, limit, start_time)
     now_ms = int(time.time() * 1000)
     return [c for c in candles if c.close_time < now_ms]
+
+
+async def fetch_forming_candle(
+    client: httpx.AsyncClient,
+    symbol: str,
+    timeframe: str,
+) -> Candle | None:
+    """Bougie EN COURS de formation (signaux à l'avance), ou None.
+
+    Récupérée telle quelle (high/low provisoires) : elle n'est JAMAIS
+    évaluée par momentum_v1 — seule la détection de proximité d'un niveau
+    P* (engine/advance.py) la lit, l'état des indicateurs restant calculé
+    sur les bougies fermées.
+    """
+    candles = await fetch_candles(client, symbol, timeframe, limit=2)
+    now_ms = int(time.time() * 1000)
+    for c in reversed(candles):
+        if c.close_time >= now_ms:
+            return c
+    return None

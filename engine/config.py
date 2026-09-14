@@ -45,6 +45,21 @@ class EngineSettings(BaseSettings):
     # bucket positif en brut sur BTC ET ETH ; divise les signaux par ~3).
     engine_min_score: int = Field(default=0, alias="ENGINE_MIN_SCORE")
 
+    # --- Signaux à l'avance (pré-alertes, engine/advance.py) ---
+    # Pendant la bougie en formation : si le prix entre à ENGINE_ADVANCE_EPS
+    # du niveau exact P* qui confirmerait un signal momentum_v1 à la clôture
+    # (et si le score AU NIVEAU passe ENGINE_MIN_SCORE), une pré-alerte est
+    # envoyée vers /internal/prealert — l'utilisateur place un ordre limite.
+    # Aucun impact sur le pipeline officiel. false (défaut) = désactivé.
+    engine_advance_enabled: bool = Field(default=False, alias="ENGINE_ADVANCE_ENABLED")
+    # Distance d'annonce relative au niveau (0.0015 = 0.15 %, valeur de l'étude).
+    engine_advance_eps: float = Field(default=0.0015, alias="ENGINE_ADVANCE_EPS")
+    # Endpoint interne du backend ; vide = aucun envoi (feature muette).
+    engine_advance_url: str | None = Field(
+        default="http://localhost:8000/internal/prealert",
+        alias="ENGINE_ADVANCE_URL",
+    )
+
     # Clé FRED (gratuite) pour la GÉNÉRATION du planning macro et les
     # études — jamais requise au runtime du moteur (le planning est un
     # fichier versionné, MACRO.md §4). Optionnelle.
