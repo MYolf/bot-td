@@ -159,3 +159,168 @@ class TestGate0:
     def test_valeurs_manquantes_ne_passent_pas(self):
         ok, _ = gate0_pass(100, {12: [1.0]}, {12: []})
         assert ok is False
+
+
+# ------------------------------------------------------------- stade IS ----
+
+
+from engine.liquidity.engine import SimParams, TradeResult
+from engine.liquidity_study import (
+    FEE_MAKER_IN_TAKER_OUT_PCT,
+    FEE_MAKER_PCT,
+    FEE_TAKER_PCT,
+    bootstrap_ci,
+    evaluate_gates_1_5,
+    plateau_variations,
+    summarize,
+    trade_net,
+    ventilation,
+)
+
+
+def mk_trade(
+    result_r: float,
+    risk_pct: float = 1.4,
+    direction: str = "long",
+    entry_type: str = "taker",
+) -> TradeResult:
+    return TradeResult(
+        candidate="A1",
+        tp_policy="median",
+        direction=direction,
+        entry_time_ms=0,
+        exit_time_ms=H4,
+        entry=100.0,
+        exit_avg=100.0,
+        sl=98.6,
+        tps=[103.0],
+        result_r=result_r,
+        exit_reason="TP",
+        duration_h=4.0,
+        entry_type=entry_type,
+        risk_pct=risk_pct,
+        pool=98.0,
+        range_median=103.0,
+        range_height=10.0,
+    )
+
+
+class TestTradeNet:
+    def test_niveaux_de_frais(self):
+        t = mk_trade(1.0, risk_pct=1.4)
+        # cout_R = frais % / risk_pct
+        assert trade_net(t, "brut" if False else "taker") == pytest.approx(
+            1.0 - FEE_TAKER_PCT / 1.4
+        )
+        assert trade_net(t, "maker") == pytest.approx(1.0 - FEE_MAKER_PCT / 1.4)
+        assert trade_net(t, "real") == pytest.approx(1.0 - FEE_TAKER_PCT / 1.4)
+
+    def test_fill_maker_sortie_realiste(self):
+        t = mk_trade(1.0, risk_pct=1.4, entry_type="maker")
+        assert trade_net(t, "real") == pytest.approx(
+            1.0 - FEE_MAKER_IN_TAKER_OUT_PCT / 1.4
+        )
+
+
+class TestSummarize:
+    def test_vide(self):
+        m = summarize([])
+        assert m["n"] == 0 and m["exp"] is None
+
+    def test_metriques_connues(self):
+        # [+1, +1, -1, +2, -1] : exp=0.4, wr=60 %, PF=4/2=2, DD=1
+        # (equity 1,2,1,3,2 -> plus grand creux sous sommet = 1).
+        m = summarize([1.0, 1.0, -1.0, 2.0, -1.0])
+        assert m["n"] == 5
+        assert m["exp"] == pytest.approx(0.4)
+        assert m["wr"] == pytest.approx(60.0)
+        assert m["pf"] == pytest.approx(2.0)
+        assert m["dd"] == pytest.approx(1.0)
+
+    def test_pf_infini_sans_perte(self):
+        assert summarize([1.0, 2.0])["pf"] is None
+
+    def test_bootstrap(self):
+        ci = bootstrap_ci([1.0, -1.0, 1.0, 1.0], n_boot=500)
+        assert ci is not None and ci[0] <= ci[1]
+
+
+def _cell(symbol: str, direction: str, wins: int, losses: int):
+    # Interleave : 2 gains puis 1 perte, pour garder un drawdown modéré
+    # (des gains tous en tête gonfleraient artificiellement le DD poolé).
+    rs = []
+    for k in range(wins + losses):
+        cycle = k % 3
+        rs.append(1.0 if (cycle < 2 and wins > 0) or (cycle == 2 and losses == 0) else (-1.0 if cycle == 2 else 1.0))
+    rs = sorted(rs, reverse=True)
+    # distribution : wins x +1 puis losses x -1, puis rotation régulière
+    seq = ([1.0, 1.0, -1.0] * losses + [1.0] * (wins - 2 * losses)) if wins >= 2 * losses else None
+    trades = [mk_trade(r, direction=direction) for r in (seq if seq else rs)]
+    return [(symbol, direction), trades]
+
+
+def _cells_ok():
+    # 60 trades/cellule (40 gagnants +1R, 20 perdants -1R), 2 symboles :
+    # brut +0.333R, net taker +0.233R, PF 2.0, DD 2R -> tous gates OK.
+    return dict([_cell("BTCUSDT", "long", 40, 20), _cell("ETHUSDT", "long", 40, 20)])
+
+
+class TestGates:
+    def test_tout_passe(self):
+        out = evaluate_gates_1_5(_cells_ok())
+        assert out["long"][0] is True
+        assert out["short"][0] is False  # aucun trade short
+
+    def test_gate1_effectifs(self):
+        cells = dict([_cell("BTCUSDT", "long", 30, 29), _cell("ETHUSDT", "long", 40, 20)])
+        out = evaluate_gates_1_5(cells)
+        assert out["long"][0] is False
+        assert "[long] 1" in out["long"][1][0]
+
+    def test_gate2_brut_negatif(self):
+        cells = dict([_cell("BTCUSDT", "long", 40, 20), _cell("ETHUSDT", "long", 10, 50)])
+        out = evaluate_gates_1_5(cells)
+        assert out["long"][0] is False
+
+    def test_gate3_nette_taker_insuffisante(self):
+        # RR 1:1 -> brut +0.333 mais frais 0.1R par trade -> net +0.233 ; pour
+        # faire chuter sous +0.10, serrer le risque : risk_pct faible.
+        cells = {}
+        for sym in ("BTCUSDT", "ETHUSDT"):
+            trades = [
+                mk_trade(1.0 if k < 40 else -1.0, risk_pct=0.5) for k in range(60)
+            ]
+            cells[(sym, "long")] = trades
+        out = evaluate_gates_1_5(cells)
+        assert out["long"][0] is False
+
+    def test_gate5_drawdown(self):
+        # 80 pertes consecutives -0.5R (brut negatif aussi, mais on verifie DD).
+        trades_btc = [mk_trade(-0.05) for _ in range(60)]
+        trades_eth = [mk_trade(-0.05) for _ in range(60)]
+        cells = {("BTCUSDT", "long"): trades_btc, ("ETHUSDT", "long"): trades_eth}
+        out = evaluate_gates_1_5(cells)
+        assert out["long"][0] is False
+
+
+class TestPlateau:
+    def test_28_variations_parametre_par_parametre(self):
+        variations = plateau_variations()
+        assert len(variations) == 28  # 14 parametres x 2
+        labels = [l for l, _ in variations]
+        assert labels[0].startswith("pool_window -")
+        # entiers arrondis
+        by_label = dict(variations)
+        assert by_label["pool_window -20%"].pool_window == 40
+        assert by_label["pool_window +20%"].pool_window == 60
+        assert by_label["activation_a_1h -20%"].activation_a_1h == 16
+        # les autres champs restent a la valeur scellee
+        assert by_label["pool_window -20%"].sl_buffer_atr == SimParams().sl_buffer_atr
+
+
+class TestVentilation:
+    def test_buckets(self):
+        trades = [mk_trade(1.0), mk_trade(-1.0), mk_trade(2.0)]
+        # ventilation en NET TAKER : chaque R est amputé de 0.14/1.4 = 0.1R.
+        vent = ventilation(trades, lambda t: "x" if t.result_r > 0 else "y")
+        assert vent == {"x": pytest.approx(1.4), "y": pytest.approx(-1.1)}

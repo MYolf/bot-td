@@ -188,6 +188,7 @@ def fvg_zone_1h(
     u: int,
     pool: float,
     direction: str,
+    displacement_atr: float = DISPLACEMENT_ATR_1H,
 ) -> tuple[float, float] | None:
     """FVG 1H de réversion à la bougie u (LIQUIDITY.md §4.5). None si non
     conforme.
@@ -205,7 +206,7 @@ def fvg_zone_1h(
     cu = candles_1h[u]
     if direction == "long":
         body = cu.close - cu.open
-        if body < DISPLACEMENT_ATR_1H * atr_u:
+        if body < displacement_atr * atr_u:
             return None
         if cu.low <= candles_1h[u - 2].high:  # pas de FVG bullish
             return None
@@ -215,7 +216,7 @@ def fvg_zone_1h(
             return None
         return zone_low, zone_high
     body = cu.open - cu.close
-    if body < DISPLACEMENT_ATR_1H * atr_u:
+    if body < displacement_atr * atr_u:
         return None
     if cu.high >= candles_1h[u - 2].low:  # pas de FVG bearish
         return None

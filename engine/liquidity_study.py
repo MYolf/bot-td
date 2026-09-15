@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import bisect
+import dataclasses
 import logging
+import random
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass
@@ -38,11 +41,19 @@ from pathlib import Path
 import httpx
 
 from engine.binance_client import INTERVAL_MS
+from engine.liquidity.engine import (
+    SEALED_CONFIGS,
+    LiquiditySimulator,
+    SimConfig,
+    SimParams,
+    TradeResult,
+)
 from engine.liquidity.primitives import (
     CONSUME_ATR,
     H4,
     SWEEP_BUFFER_ATR,
     atr14_4h,
+    ema200_4h,
     pool_series,
     range_series,
 )
@@ -228,6 +239,252 @@ def gate0_pass(
 # ------------------------------------------------------------------ CLI --
 
 
+# ============================================================== STADE IS ==
+#
+# Métriques §9 et gates §10.2 (1-5, 9) pour les configurations scellées,
+# entrées dans l'IS uniquement (les positions encore ouvertes à la fin de
+# l'IS sortent en EOD au dernier close — mark-to-market honnête, comptées
+# et signalées).
+
+# Frais §3.4 en % du prix : aller + retour + 2 x slippage.
+FEE_TAKER_PCT = 0.05 + 0.05 + 2 * 0.02  # 0.14 %
+FEE_MAKER_PCT = 0.02 + 0.02 + 2 * 0.02  # 0.08 %
+FEE_MAKER_IN_TAKER_OUT_PCT = 0.02 + 0.05 + 2 * 0.02  # 0.11 %
+
+DIRECTIONS = ("long", "short")
+
+
+def trade_net(trade: TradeResult, level: str) -> float:
+    """R net d'un trade au niveau de frais demandé.
+
+    level : "taker" (tout taker), "maker" (tout maker) ou "real"
+    (maker à l'entrée si fill limite, taker à la sortie ; taker sinon).
+    """
+    if level == "taker":
+        fee_pct = FEE_TAKER_PCT
+    elif level == "maker":
+        fee_pct = FEE_MAKER_PCT
+    else:
+        fee_pct = (
+            FEE_MAKER_IN_TAKER_OUT_PCT
+            if trade.entry_type == "maker"
+            else FEE_TAKER_PCT
+        )
+    return trade.result_r - fee_pct / trade.risk_pct
+
+
+def trade_nets(trades: list[TradeResult], level: str) -> list[float]:
+    return [trade_net(t, level) for t in trades]
+
+
+def summarize(nets: list[float]) -> dict:
+    """n, expectancy, médiane, winrate, profit factor, max drawdown."""
+    n = len(nets)
+    if n == 0:
+        return {"n": 0, "exp": None, "med": None, "wr": None, "pf": None, "dd": None}
+    gross_win = sum(r for r in nets if r > 0)
+    gross_loss = sum(r for r in nets if r < 0)
+    equity = 0.0
+    peak = 0.0
+    dd = 0.0
+    for r in nets:
+        equity += r
+        peak = max(peak, equity)
+        dd = max(dd, peak - equity)
+    return {
+        "n": n,
+        "exp": sum(nets) / n,
+        "med": statistics.median(nets),
+        "wr": 100.0 * sum(1 for r in nets if r > 0) / n,
+        "pf": None if gross_loss == 0 else gross_win / abs(gross_loss),
+        "dd": dd,
+    }
+
+
+def bootstrap_ci(nets: list[float], n_boot: int = 10_000, seed: int = 42) -> tuple[float, float] | None:
+    """IC 90 % de l'expectancy par rééchantillonnage (informatif, §9)."""
+    if not nets:
+        return None
+    rng = random.Random(seed)
+    n = len(nets)
+    means = sorted(
+        sum(rng.choices(nets, k=n)) / n for _ in range(n_boot)
+    )
+    return means[int(0.05 * n_boot)], means[int(0.95 * n_boot)]
+
+
+def breakout_events(candles: list[Candle], symbol: str) -> list[SweepEventStudy]:
+    """Population-mère de C : breakouts §8 (clôture + EMA200 + consommation),
+    même structure que sweep_events."""
+    atrs = atr14_4h(candles)
+    pools = pool_series(candles)
+    ranges = range_series(candles, pools, atrs)
+    ema = ema200_4h(candles)
+    consumed: dict[str, float | None] = {"SSL": None, "BSL": None}
+    events: list[SweepEventStudy] = []
+    for i in range(1, len(candles)):
+        a = atrs[i]
+        rng = ranges[i - 1]
+        if a is None or rng is None or ema[i] is None or ema[i - 1] is None:
+            continue
+        p = pools[i - 1]
+        candle = candles[i]
+        for side, direction, pool in (("BSL", "long", p.bsl), ("SSL", "short", p.ssl)):
+            if pool is None:
+                continue
+            prev = consumed[side]
+            if prev is not None and abs(pool - prev) <= CONSUME_ATR * a:
+                continue
+            if direction == "long":
+                broke = candle.close > pool
+                context = ema[i] > ema[i - 1] and candle.close > ema[i]
+            else:
+                broke = candle.close < pool
+                context = ema[i] < ema[i - 1] and candle.close < ema[i]
+            if broke and context:
+                consumed[side] = pool
+                events.append(
+                    SweepEventStudy(
+                        index=i,
+                        symbol=symbol,
+                        side=side,
+                        direction=direction,
+                        pool=pool,
+                        close_ms=candle.open_time + H4,
+                    )
+                )
+    return events
+
+
+def mother_events(
+    candidate: str, candles: list[Candle], symbol: str
+) -> list[SweepEventStudy]:
+    if candidate in ("A1", "A2", "B"):
+        return sweep_events(candles, symbol)
+    return breakout_events(candles, symbol)
+
+
+# ------------------------------------------------------------------ gates --
+
+
+def evaluate_gates_1_5(
+    trades_by_cell: dict[tuple[str, str], list[TradeResult]],
+) -> dict[str, tuple[bool, list[str]]]:
+    """Gates §10.2 n° 1-5, évalués PAR DIRECTION (gate 10 : chaque direction
+    doit passer seule). trades_by_cell : (symbole, direction) -> trades IS.
+
+    Retour : direction -> (passe, détails)."""
+    out: dict[str, tuple[bool, list[str]]] = {}
+    for direction in DIRECTIONS:
+        cells = {
+            symbol: trades
+            for (symbol, d), trades in trades_by_cell.items()
+            if d == direction and trades
+        }
+        details: list[str] = []
+        if not cells:
+            out[direction] = (False, [f"[{direction}] aucun trade"])
+            continue
+        all_trades = [t for trades in cells.values() for t in trades]
+        brut = summarize([t.result_r for t in all_trades])
+        nets_taker = trade_nets(all_trades, "taker")
+        net = summarize(nets_taker)
+        # 1. effectifs
+        g1 = all(summarize([t.result_r for t in ts])["n"] >= 60 for ts in cells.values()) and len(all_trades) >= 80
+        details.append(
+            f"[{direction}] 1 effectifs : "
+            + ", ".join(f"{s} n={len(ts)}" for s, ts in sorted(cells.items()))
+            + f" poolé n={len(all_trades)} (>=60/cellule, >=80 poolé) -> "
+            + ("OK" if g1 else "NON")
+        )
+        # 2. expectancy brute > 0 sur chaque symbole
+        g2 = all(
+            summarize([t.result_r for t in ts])["n"] > 0
+            and summarize([t.result_r for t in ts])["exp"] > 0
+            for ts in cells.values()
+        )
+        exp_txt = ", ".join(
+            f"{s} {summarize([t.result_r for t in ts])['exp']:+.3f}R"
+            for s, ts in sorted(cells.items())
+        )
+        details.append(f"[{direction}] 2 brut > 0 chaque symbole : {exp_txt} -> " + ("OK" if g2 else "NON"))
+        # 3. nette taker >= +0.10R poolée, >= 0 chaque cellule
+        g3 = net["exp"] is not None and net["exp"] >= 0.10 and all(
+            (lambda m: m["n"] > 0 and m["exp"] >= 0)(summarize(trade_nets(ts, "taker")))
+            for ts in cells.values()
+        )
+        details.append(
+            f"[{direction}] 3 nette taker poolée {net['exp']:+.3f}R (>= +0.10) et "
+            f">= 0 par cellule -> " + ("OK" if g3 else "NON")
+        )
+        # 4. PF net taker poolé >= 1.30
+        g4 = net["pf"] is not None and net["pf"] >= 1.30
+        pf_txt = f"{net['pf']:.2f}" if net["pf"] is not None else "n/a"
+        details.append(f"[{direction}] 4 PF net taker poolé {pf_txt} (>= 1.30) -> " + ("OK" if g4 else "NON"))
+        # 5. max DD net <= 12R poolé
+        g5 = net["dd"] is not None and net["dd"] <= 12.0
+        details.append(f"[{direction}] 5 max DD net taker poolé {net['dd']:.2f}R (<= 12) -> " + ("OK" if g5 else "NON"))
+        out[direction] = (g1 and g2 and g3 and g4 and g5, details)
+    return out
+
+
+# ---------------------------------------------------------------- plateau --
+
+
+def plateau_variations() -> list[tuple[str, SimParams]]:
+    """±20 % de chaque paramètre libre §11 (k=3 exclu), un paramètre à la
+    fois, les autres à leur valeur scellée. Entiers : arrondi."""
+    out: list[tuple[str, SimParams]] = []
+    for f in dataclasses.fields(SimParams):
+        base = f.default
+        for factor, tag in ((0.8, "-20%"), (1.2, "+20%")):
+            value = base * factor
+            if f.type == "int":
+                value = round(value)
+            out.append((f"{f.name} {tag}", SimParams(**{f.name: value})))
+    return out
+
+
+# ---------------------------------------------------- regimes et ventilations
+
+
+def regime_at(
+    candles_4h: list[Candle], ema: list[float | None], atrs: list[float | None],
+    close_times: list[int], entry_ms: int, vol_median: float | None,
+) -> str:
+    """Régime §3.5 à l'entrée d'un trade : bull/bear/chop + HIGH/LOW VOL."""
+    i = bisect.bisect_right(close_times, entry_ms) - 1
+    if i < 20 or ema[i] is None or ema[i - 1] is None:
+        return "chop"
+    bull = ema[i] > ema[i - 1] and candles_4h[i].close > ema[i]
+    for j in range(i - 19, i + 1):
+        if ema[j] is None or ema[j - 1] is None or not ema[j] > ema[j - 1]:
+            bull = False
+            break
+    bear = ema[i] < ema[i - 1] and candles_4h[i].close < ema[i]
+    if bear:
+        for j in range(i - 19, i + 1):
+            if ema[j] is None or ema[j - 1] is None or not ema[j] < ema[j - 1]:
+                bear = False
+                break
+    trend = "bull" if bull else ("bear" if bear else "chop")
+    if vol_median is not None and atrs[i] is not None:
+        vol = "HIGHVOL" if atrs[i] / candles_4h[i].close > vol_median else "LOWVOL"
+        return f"{trend}/{vol}"
+    return trend
+
+
+def ventilation(trades: list[TradeResult], label_of) -> dict[str, float]:
+    """Expectancy nette taker ventilée par bucket (année, régime...)."""
+    buckets: dict[str, list[float]] = defaultdict(list)
+    for t in trades:
+        buckets[label_of(t)].append(trade_net(t, "taker"))
+    return {k: sum(v) / len(v) for k, v in sorted(buckets.items())}
+
+
+# ------------------------------------------------------------------ CLI --
+
+
 def _to_ms(moment: datetime) -> int:
     return int(moment.timestamp() * 1000)
 
@@ -305,12 +562,190 @@ async def _stage_gate0(client: httpx.AsyncClient, args: argparse.Namespace) -> N
     print(f"(journalisé dans {TRIALS_LOG})")
 
 
+async def _load_is_1h(
+    client: httpx.AsyncClient, symbol: str, days: int
+) -> list[Candle]:
+    """Bougies 1H tronquées à la fin de l'IS."""
+    candles = await load_history(client, symbol, "60", days)
+    end_ms = _to_ms(IS_END)
+    return [c for c in candles if c.open_time + INTERVAL_MS["60"] <= end_ms]
+
+
+def _fmt_r(v: float | None) -> str:
+    return f"{v:+.3f}R" if v is not None else "n/a"
+
+
+def _fmt_f(v: float | None) -> str:
+    return f"{v:.2f}" if v is not None else "n/a"
+
+
+def _cell_line(label: str, trades: list[TradeResult]) -> str:
+    brut = summarize([t.result_r for t in trades])
+    net_t = summarize(trade_nets(trades, "taker"))
+    net_m = summarize(trade_nets(trades, "maker"))
+    net_r = summarize(trade_nets(trades, "real"))
+    eod = sum(1 for t in trades if t.exit_reason == "EOD")
+    dur = sum(t.duration_h for t in trades) / len(trades)
+    return (
+        f"  {label:<18} n={brut['n']:<4} brut {_fmt_r(brut['exp'])} | "
+        f"taker {_fmt_r(net_t['exp'])} PF {_fmt_f(net_t['pf'])} DD {net_t['dd']:.2f}R | "
+        f"maker {_fmt_r(net_m['exp'])} | maker-in/taker-out {_fmt_r(net_r['exp'])} | "
+        f"WR {brut['wr']:.0f}% | med {_fmt_r(brut['med'])} | dur {dur:.0f}h | EOD {eod}"
+    )
+
+
+async def _stage_is(client: httpx.AsyncClient, args: argparse.Namespace) -> None:
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    data: dict[str, tuple[list[Candle], list[Candle]]] = {}
+    regimes: dict[str, tuple] = {}
+    for symbol in symbols:
+        c4 = await _load_is_4h(client, symbol, args.days)
+        c1 = await _load_is_1h(client, symbol, args.days)
+        if not c4 or not c1:
+            raise SystemExit(f"bougies manquantes pour {symbol}")
+        data[symbol] = (c4, c1)
+        atrs4 = atr14_4h(c4)
+        ema = ema200_4h(c4)
+        start_ms = _to_ms(IS_START)
+        ratios = [
+            a / c.close
+            for c, a in zip(c4, atrs4)
+            if a is not None and c.open_time + H4 >= start_ms
+        ]
+        regimes[symbol] = (
+            ema,
+            atrs4,
+            [c.open_time + H4 for c in c4],
+            statistics.median(ratios) if ratios else None,
+        )
+        print(
+            f"données {symbol} : {len(c4)} bougies 4H / {len(c1)} bougies 1H "
+            f"({datetime.fromtimestamp(c4[0].open_time / 1000, tz=timezone.utc):%Y-%m-%d} "
+            f"-> {datetime.fromtimestamp(c4[-1].open_time / 1000, tz=timezone.utc):%Y-%m-%d})"
+        )
+
+    start_ms = _to_ms(IS_START)
+    end_ms = _to_ms(IS_END)
+    journal: list[str] = []
+    for cand, pol in SEALED_CONFIGS:
+        config = SimConfig(cand, pol)
+        print()
+        print(f"===== {cand}/{pol} =====")
+        trades_by_cell: dict[tuple[str, str], list[TradeResult]] = {}
+        pooled: list[TradeResult] = []
+        for symbol, (c4, c1) in data.items():
+            sim = LiquiditySimulator(c4, c1, config)
+            trades = [t for t in sim.run() if start_ms <= t.entry_time_ms < end_ms]
+            mothers = [
+                e
+                for e in mother_events(cand, c4, symbol)
+                if start_ms <= e.close_ms < end_ms
+            ]
+            for direction in DIRECTIONS:
+                ts = [t for t in trades if t.direction == direction]
+                trades_by_cell[(symbol, direction)] = ts
+                if ts:
+                    print(_cell_line(f"{symbol} {direction}", ts))
+            pooled.extend(trades)
+            conv = 100.0 * len(trades) / len(mothers) if mothers else 0.0
+            fills = sum(1 for t in trades if t.entry_type == "maker")
+            print(
+                f"  -> {symbol} : {len(mothers)} événements-mères, {len(trades)} trades "
+                f"(conversion {conv:.0f} %), fills maker {fills}"
+            )
+            ema_s, atrs_s, close_times_s, vol_med_s = regimes[symbol]
+            vent_regime = ventilation(
+                trades,
+                lambda t: regime_at(
+                    c4, ema_s, atrs_s, close_times_s, t.entry_time_ms, vol_med_s
+                ),
+            )
+            if vent_regime:
+                print(
+                    f"  régimes {symbol} (net taker) : "
+                    + ", ".join(f"{k}: {v:+.2f}R" for k, v in vent_regime.items())
+                )
+        if not pooled:
+            print("  AUCUN TRADE — configuration non évaluable")
+            journal.append(f"IS | {cand}/{pol} | aucun trade | REJET")
+            continue
+        print(_cell_line("POOLÉ (2 symboles)", pooled))
+        pooled_nets = trade_nets(pooled, "taker")
+        ci = bootstrap_ci(pooled_nets)
+        if ci:
+            print(f"  IC 90 % expectancy nette taker poolée : [{ci[0]:+.3f}R, {ci[1]:+.3f}R]")
+        vent_annee = ventilation(
+            pooled,
+            lambda t: str(
+                datetime.fromtimestamp(t.entry_time_ms / 1000, tz=timezone.utc).year
+            ),
+        )
+        print(
+            "  par année (net taker) : "
+            + ", ".join(f"{k}: {v:+.2f}R" for k, v in vent_annee.items())
+        )
+
+        print("  --- Gates 1-5 (par direction, évaluée seule — gate 10) ---")
+        gates = evaluate_gates_1_5(trades_by_cell)
+        for direction in DIRECTIONS:
+            ok, details = gates[direction]
+            for line in details:
+                print(f"  {line}")
+            print(f"  => {cand}/{pol} [{direction}] : gates 1-5 {'PASS' if ok else 'FAIL'}")
+
+        plateau_ok, plateau_worst = True, None
+        if args.plateau:
+            print("  --- Gate 9 : plateau ±20 % (expectancy nette taker poolée) ---")
+            for label, params in plateau_variations():
+                nets: list[float] = []
+                for symbol, (c4, c1) in data.items():
+                    sim = LiquiditySimulator(c4, c1, config, params)
+                    nets.extend(
+                        trade_net(t, "taker")
+                        for t in sim.run()
+                        if start_ms <= t.entry_time_ms < end_ms
+                    )
+                exp = sum(nets) / len(nets) if nets else None
+                if plateau_worst is None or (exp is not None and plateau_worst[1] is not None and exp < plateau_worst[1]):
+                    plateau_worst = (label, exp)
+                ok_var = exp is not None and exp > 0
+                plateau_ok = plateau_ok and ok_var
+                print(
+                    f"  plateau {label:<28} n={len(nets):<4} exp {_fmt_r(exp)} "
+                    f"{'OK' if ok_var else 'NON'}"
+                )
+            print(
+                f"  => plateau {'PASS' if plateau_ok else 'FAIL'} "
+                f"(pire : {plateau_worst[0]} {_fmt_r(plateau_worst[1])})"
+            )
+
+        resume = " ; ".join(
+            f"{d}: {'PASS' if gates[d][0] else 'FAIL'}" for d in DIRECTIONS
+        )
+        resume += f" ; plateau: {'PASS' if plateau_ok else 'FAIL'}"
+        with TRIALS_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC | IS | "
+                f"{cand}/{pol} | poolé n={len(pooled)} "
+                f"net taker {_fmt_r(summarize(pooled_nets)['exp'])} | gates 1-5+9 : {resume}\n"
+            )
+        journal.append(f"IS | {cand}/{pol} | {resume}")
+
+    print()
+    print("--- Synthèse IS (gates 1-5 + 9 ; gates 6-8 = OOS/WF, plus tard) ---")
+    for line in journal:
+        print(f"  {line}")
+    print(f"(journalisé dans {TRIALS_LOG})")
+
+
 async def _run(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient() as client:
         if args.stage == "gate0":
             await _stage_gate0(client, args)
+        elif args.stage == "is":
+            await _stage_is(client, args)
         else:
-            raise SystemExit(f"stade inconnu : {args.stage} (étapes IS/OOS/WF à venir)")
+            raise SystemExit(f"stade inconnu : {args.stage} (étapes OOS/WF à venir)")
 
 
 def main() -> None:
@@ -319,8 +754,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Étude LIQUIDITY (aucun envoi réseau sortant hors Binance données publiques)."
     )
-    parser.add_argument("--stage", default="gate0", choices=["gate0"])
+    parser.add_argument("--stage", default="gate0", choices=["gate0", "is"])
     parser.add_argument("--symbols", default="BTCUSDT,ETHUSDT")
+    parser.add_argument(
+        "--no-plateau",
+        dest="plateau",
+        action="store_false",
+        help="stade is : sauter le gate 9 (plateau +/-20 pourcents)",
+    )
     parser.add_argument(
         "--days",
         type=int,

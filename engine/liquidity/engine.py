@@ -41,13 +41,16 @@ from dataclasses import dataclass, field
 
 from engine.liquidity.primitives import (
     ACTIVATION_A_1H,
+    DISPLACEMENT_ATR_1H,
     ACTIVATION_C_1H,
     CANCEL_ATR,
     CONSUME_ATR,
     FVG_WINDOW_1H,
+    POOL_WINDOW,
     H1,
     H4,
     MIN_RR_B,
+    RANGE_MIN_ATR,
     ORDER_VALIDITY_B_1H,
     RETEST_ATR,
     SL_BUFFER_ATR,
@@ -74,6 +77,28 @@ SEALED_CONFIGS: tuple[tuple[str, str], ...] = (
     ("B", "swing"),
     ("C", "measured"),
 )
+
+
+@dataclass(frozen=True)
+class SimParams:
+    """Paramètres libres §11 (valeurs scellées par défaut). Le plateau de
+    robustesse ±20 % (gate 9) injecte des variations ; k=3 n'en fait pas
+    partie (définition canonique du projet)."""
+
+    pool_window: int = POOL_WINDOW
+    range_min_atr: float = RANGE_MIN_ATR
+    sweep_buffer_atr: float = SWEEP_BUFFER_ATR
+    sl_buffer_atr: float = SL_BUFFER_ATR
+    consume_atr: float = CONSUME_ATR
+    activation_a_1h: int = ACTIVATION_A_1H
+    activation_c_1h: int = ACTIVATION_C_1H
+    fvg_window_1h: int = FVG_WINDOW_1H
+    order_validity_b_1h: int = ORDER_VALIDITY_B_1H
+    displacement_atr_1h: float = DISPLACEMENT_ATR_1H
+    min_rr_b: float = MIN_RR_B
+    cancel_atr: float = CANCEL_ATR
+    retest_atr: float = RETEST_ATR
+    time_exit_1h: int = TIME_EXIT_1H
 
 
 @dataclass(frozen=True)
@@ -172,6 +197,7 @@ class LiquiditySimulator:
         candles_4h: list[Candle],
         candles_1h: list[Candle],
         config: SimConfig,
+        params: SimParams | None = None,
     ):
         if any(c.open_time % H4 for c in candles_4h):
             raise ValueError("bougies 4H non alignées (open_time % 4h != 0)")
@@ -180,10 +206,13 @@ class LiquiditySimulator:
         self._c4 = candles_4h
         self._c1 = candles_1h
         self._config = config
+        self._p = params if params is not None else SimParams()
         self._atr4 = atr14_4h(candles_4h)
         self._ema200 = ema200_4h(candles_4h)
-        self._pools = pool_series(candles_4h)
-        self._ranges = range_series(candles_4h, self._pools, self._atr4)
+        self._pools = pool_series(candles_4h, window=self._p.pool_window)
+        self._ranges = range_series(
+            candles_4h, self._pools, self._atr4, min_width_atr=self._p.range_min_atr
+        )
         self._last_high4, self._last_low4 = last_swing_series(candles_4h)
         self._atr1 = atr14_1h(candles_1h)
         self._consumed: dict[str, float | None] = {"SSL": None, "BSL": None}
@@ -259,12 +288,12 @@ class LiquiditySimulator:
             else:  # retest C : wick au niveau + clôture du bon côté
                 if long:
                     trig = (
-                        c1.low <= setup.pool + RETEST_ATR * setup.atr_4h
+                        c1.low <= setup.pool + self._p.retest_atr * setup.atr_4h
                         and c1.close > setup.pool
                     )
                 else:
                     trig = (
-                        c1.high >= setup.pool - RETEST_ATR * setup.atr_4h
+                        c1.high >= setup.pool - self._p.retest_atr * setup.atr_4h
                         and c1.close < setup.pool
                     )
             if trig:
@@ -272,28 +301,31 @@ class LiquiditySimulator:
             return
 
         # --- B : recherche du FVG de réversion (premier conforme gagne) ---
-        zone = fvg_zone_1h(self._c1, self._atr1, j, setup.pool, setup.direction)
+        zone = fvg_zone_1h(
+            self._c1, self._atr1, j, setup.pool, setup.direction,
+            displacement_atr=self._p.displacement_atr_1h,
+        )
         if zone is None:
             return
         zl, zh = zone
         setup.zone = zone
         setup.sl = (
-            min(zl, setup.pool) - SL_BUFFER_ATR * setup.atr_4h
+            min(zl, setup.pool) - self._p.sl_buffer_atr * setup.atr_4h
             if long
-            else max(zh, setup.pool) + SL_BUFFER_ATR * setup.atr_4h
+            else max(zh, setup.pool) + self._p.sl_buffer_atr * setup.atr_4h
         )
         setup.order_level = (zl + zh) / 2.0  # milieu de zone
         # La bougie du FVG ne peut pas remplir : validité = les
         # ORDER_VALIDITY_B_1H bougies 1H SUIVANTES.
-        setup.order_bars_left = ORDER_VALIDITY_B_1H
+        setup.order_bars_left = self._p.order_validity_b_1h
 
     def _open_taker(self, setup: _Setup, j: int, c1: Candle) -> None:
         long = setup.direction == "long"
         if setup.candidate == "C":  # SL derrière le retest
             setup.sl = (
-                min(c1.low, setup.pool) - SL_BUFFER_ATR * setup.atr_4h
+                min(c1.low, setup.pool) - self._p.sl_buffer_atr * setup.atr_4h
                 if long
-                else max(c1.high, setup.pool) + SL_BUFFER_ATR * setup.atr_4h
+                else max(c1.high, setup.pool) + self._p.sl_buffer_atr * setup.atr_4h
             )
         self._pos = _Pos(
             setup=setup,
@@ -324,7 +356,7 @@ class LiquiditySimulator:
             if not (ref > entry if long else ref < entry):
                 self._setup = None
                 return
-            if abs(ref - entry) / risk < MIN_RR_B:
+            if abs(ref - entry) / risk < self._p.min_rr_b:
                 self._setup = None  # exigence RR >= 1.2 : trade non pris
                 return
             setup.tps = [ref]
@@ -357,7 +389,7 @@ class LiquiditySimulator:
         pos.closed = [False] * len(pos.tps)
         pos.exits = [None] * len(pos.tps)
         pos.exit_reasons = [""] * len(pos.tps)
-        pos.time_exit_idx = j + TIME_EXIT_1H
+        pos.time_exit_idx = j + self._p.time_exit_1h
         self._setup = None  # une position à la fois : setup nettoyé
 
     # ----------------------------------------------------------- suivi 1H
@@ -491,13 +523,13 @@ class LiquiditySimulator:
         if pool is None or rng is None:
             return
         consumed = self._consumed[side]
-        if consumed is not None and abs(pool - consumed) <= CONSUME_ATR * a:
+        if consumed is not None and abs(pool - consumed) <= self._p.consume_atr * a:
             return  # anti-re-sweep : niveau déjà consommé
         if direction == "long":
-            pierced = c.low <= pool - SWEEP_BUFFER_ATR * a
+            pierced = c.low <= pool - self._p.sweep_buffer_atr * a
             rejected = c.close > pool
         else:
-            pierced = c.high >= pool + SWEEP_BUFFER_ATR * a
+            pierced = c.high >= pool + self._p.sweep_buffer_atr * a
             rejected = c.close < pool
         if not (pierced and rejected):
             return
@@ -518,7 +550,9 @@ class LiquiditySimulator:
             sweep_extreme=c.low if long else c.high,
             activation_start_ms=c.open_time + H4,
             bars_left=(
-                FVG_WINDOW_1H if self._config.candidate == "B" else ACTIVATION_A_1H
+                self._p.fvg_window_1h
+                if self._config.candidate == "B"
+                else self._p.activation_a_1h
             ),
         )
         if setup.candidate in ("A1", "A2"):
@@ -526,7 +560,9 @@ class LiquiditySimulator:
                 setup.sweep_extreme, pool
             )
             setup.sl = (
-                base - SL_BUFFER_ATR * a if long else base + SL_BUFFER_ATR * a
+                base - self._p.sl_buffer_atr * a
+                if long
+                else base + self._p.sl_buffer_atr * a
             )
             if self._config.tp_policy == "median":
                 setup.tps = [rng.median]
@@ -536,9 +572,11 @@ class LiquiditySimulator:
                 setup.weights = [0.5, 0.5]
             if setup.candidate == "A2":  # ordre limite posé dès le sweep
                 setup.order_level = (
-                    pool + SL_BUFFER_ATR * a if long else pool - SL_BUFFER_ATR * a
+                    pool + self._p.sl_buffer_atr * a
+                    if long
+                    else pool - self._p.sl_buffer_atr * a
                 )
-                setup.order_bars_left = ACTIVATION_A_1H
+                setup.order_bars_left = self._p.activation_a_1h
         self._setup = setup  # remplace un éventuel setup en attente
 
     def _detect_breakout(
@@ -555,7 +593,7 @@ class LiquiditySimulator:
         if pool is None or rng is None:
             return
         consumed = self._consumed[side]
-        if consumed is not None and abs(pool - consumed) <= CONSUME_ATR * a:
+        if consumed is not None and abs(pool - consumed) <= self._p.consume_atr * a:
             return
         ema_now = self._ema200[i]
         ema_prev = self._ema200[i - 1]
@@ -583,7 +621,7 @@ class LiquiditySimulator:
             atr_4h=a,
             sweep_extreme=c.low if long else c.high,
             activation_start_ms=c.open_time + H4,
-            bars_left=ACTIVATION_C_1H,
+            bars_left=self._p.activation_c_1h,
             tps=[pool + rng.height if long else pool - rng.height],
             weights=[1.0],
         )
@@ -596,9 +634,9 @@ class LiquiditySimulator:
             return
         long = setup.direction == "long"
         failed = (
-            c.close < setup.pool - CANCEL_ATR * a
+            c.close < setup.pool - self._p.cancel_atr * a
             if long
-            else c.close > setup.pool + CANCEL_ATR * a
+            else c.close > setup.pool + self._p.cancel_atr * a
         )
         if failed:
             self._setup = None
