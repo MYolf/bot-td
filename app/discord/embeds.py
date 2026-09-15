@@ -754,12 +754,18 @@ def build_closure_embed(outcome) -> discord.Embed:
 
     `outcome` : `app.paper_trading.engine.CloseOutcome`.
     """
+    is_be = outcome.exit_reason == "BE"
     is_tp = outcome.exit_reason == "TP"
-    titre = "✅ Take Profit atteint" if is_tp else "❌ Stop Loss atteint"
+    if is_be:
+        titre, couleur = "🛡️ Break-even touché", 0xF1C40F  # jaune : ni gain ni perte
+    elif is_tp:
+        titre, couleur = "✅ Take Profit atteint", GREEN
+    else:
+        titre, couleur = "❌ Stop Loss atteint", RED
     is_buy = outcome.action == "BUY"
     embed = discord.Embed(
         title=f"{titre} — {outcome.symbol}",
-        color=GREEN if is_tp else RED,
+        color=couleur,
     )
     if outcome.sequence_number is not None:
         embed.add_field(name="Trade", value=f"#{outcome.sequence_number}", inline=True)
@@ -767,8 +773,12 @@ def build_closure_embed(outcome) -> discord.Embed:
     embed.add_field(name="Strategy", value=strategy_label(outcome.strategy), inline=True)
     embed.add_field(name="Entry", value=format_price(outcome.entry_price), inline=True)
     embed.add_field(name="Sortie", value=format_price(outcome.exit_price), inline=True)
-    signe = "+" if outcome.result_r > 0 else ""
-    embed.add_field(name="Résultat", value=f"{signe}{outcome.result_r.normalize()} R", inline=True)
+    if is_be:
+        resultat = "+0R"  # sortie à l'entrée : solde préservé, ni gain ni perte
+    else:
+        signe = "+" if outcome.result_r > 0 else ""
+        resultat = f"{signe}{outcome.result_r.normalize()} R"
+    embed.add_field(name="Résultat", value=resultat, inline=True)
     embed.add_field(
         name="Ouvert le", value=format_day_time(outcome.opened_at), inline=True
     )

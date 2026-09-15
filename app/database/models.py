@@ -132,7 +132,9 @@ class PaperTrade(Base):
 
     __tablename__ = "paper_trades"
     __table_args__ = (
-        CheckConstraint("exit_reason IN ('TP', 'SL')", name="ck_paper_trades_exit_reason"),
+        CheckConstraint(
+            "exit_reason IN ('TP', 'SL', 'BE')", name="ck_paper_trades_exit_reason"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -1,5 +1,6 @@
 """Tests des embeds Discord (Phase 12)."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -204,6 +205,21 @@ class TestClosureEmbed:
         assert champs["Position"] == "LONG 🟢"
         assert champs["Sortie"] == "104"
         assert champs["Résultat"] == "+2 R"
+
+    def test_cloture_be_titre_jaune_et_0r(self):
+        """Clôture break-even : titre dédié, couleur jaune, résultat +0R."""
+        outcome = replace(
+            self._outcome(),
+            exit_reason="BE",
+            exit_price=Decimal("100"),
+            result_r=Decimal("0"),
+        )
+        embed = build_closure_embed(outcome)
+        assert embed.title == "🛡️ Break-even touché — BTCUSDT"
+        assert embed.color.value == 0xF1C40F  # jaune : ni gain ni perte
+        champs = {f.name: f.value for f in embed.fields}
+        assert champs["Sortie"] == "100"  # sortie à l'entrée
+        assert champs["Résultat"] == "+0R"
 
 
 class TestStatsEmbed:

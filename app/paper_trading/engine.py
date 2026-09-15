@@ -57,9 +57,16 @@ def resolve_exit(
 
 
 def result_in_r(exit_reason: str, risk_reward: Decimal) -> Decimal:
-    """Résultat en R (Projet.md §33) : TP -> +RR, SL -> -1R."""
+    """Résultat en R (Projet.md §33) : TP -> +RR, SL -> -1R, BE -> 0R.
+
+    BE : position protégée au break-even (rappel +1,5R émis) puis prix
+    revenu à l'entrée — sortie à l'entrée, ni gain ni perte sur le solde
+    (les sorties partielles TP1/TP2 restent des rappels de gestion).
+    """
     if exit_reason == "TP":
         return risk_reward
+    if exit_reason == "BE":
+        return Decimal("0")
     return Decimal("-1")
 
 
@@ -235,13 +242,21 @@ class PaperTradingEngine:
             for position, signal, strategy_name in await repository.open_with_signal_by_symbol(symbol):
                 if _as_utc(signal.signal_timestamp) > candle_start:
                     continue  # position ouverte à la clôture de cette même bougie
+                # Position protégée au break-even (rappel +1,5R émis) : le stop
+                # actif devient l'entrée — un retour à l'entrée clôture à 0R
+                # (exit_reason "BE") au lieu du SL d'origine. Le drapeau
+                # be_notified n'étant positionné qu'APRÈS check_candle, le BE
+                # ne peut jamais s'appliquer à la bougie qui l'a déclenché.
+                stop_actif = signal.entry_price if position.be_notified else signal.stop_loss
                 exit_reason = resolve_exit_candle(
-                    signal.action, high, low, signal.stop_loss, signal.take_profit
+                    signal.action, high, low, stop_actif, signal.take_profit
                 )
                 if exit_reason is None:
                     continue
+                if exit_reason == "SL" and position.be_notified:
+                    exit_reason = "BE"
                 exit_price = (
-                    signal.stop_loss if exit_reason == "SL" else signal.take_profit
+                    stop_actif if exit_reason in ("SL", "BE") else signal.take_profit
                 )
                 outcomes.append(
                     await self._close(
@@ -278,6 +293,14 @@ class PaperTradingEngine:
                     continue  # SL touché par cette bougie : clôture prudente
                 if signal.action == "SELL" and high >= signal.stop_loss:
                     continue
+                # Position protégée au break-even : si cette bougie revient à
+                # l'entrée, la clôture BE (prudente, comme le SL) l'emporte
+                # sur tout rappel de sortie partielle.
+                if position.be_notified:
+                    if signal.action == "BUY" and low <= signal.entry_price:
+                        continue
+                    if signal.action == "SELL" and high >= signal.entry_price:
+                        continue
                 for multiple in TP_MULTIPLES:
                     if getattr(position, f"tp{multiple}_notified"):
                         continue
@@ -428,17 +451,25 @@ class PaperTradingEngine:
         atteint par ce prix."""
         outcomes: list[CloseOutcome] = []
         for position, signal, strategy_name in await repository.open_with_signal_by_symbol(symbol):
+            # Même règle BE que check_candle : stop actif à l'entrée si la
+            # position a été protégée au break-even (clôture à 0R).
+            stop_actif = signal.entry_price if position.be_notified else signal.stop_loss
             exit_reason = resolve_exit(
                 signal.action,
                 price,
-                signal.stop_loss,
+                stop_actif,
                 signal.take_profit,
             )
             if exit_reason is None:
                 continue
+            if exit_reason == "SL" and position.be_notified:
+                exit_reason = "BE"
+            # BE : sortie au niveau de l'entrée ; SL/TP : prix déclencheur
+            # (comportement historique de la clôture par nouveau signal).
+            exit_price = signal.entry_price if exit_reason == "BE" else price
             outcomes.append(
                 await self._close(
-                    repository, position, signal, strategy_name, exit_reason, price
+                    repository, position, signal, strategy_name, exit_reason, exit_price
                 )
             )
         return outcomes

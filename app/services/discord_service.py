@@ -172,9 +172,10 @@ def provide_tp_notifier() -> SignalNotifier | None:
 
 
 def closure_notifier(exit_reason: str) -> SignalNotifier | None:
-    """Notifieur du salon de clôture selon la raison : SL -> salon SL,
-    TP -> salon TP (le salon récap ne reçoit que le récap hebdo)."""
-    return _sl_notifier if exit_reason == "SL" else _tp_notifier
+    """Notifieur du salon de clôture selon la raison : SL et BE (sortie
+    protégée) -> salon SL, TP -> salon TP (le salon récap ne reçoit que le
+    récap hebdo)."""
+    return _sl_notifier if exit_reason in ("SL", "BE") else _tp_notifier
 
 
 async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:

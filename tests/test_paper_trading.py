@@ -110,6 +110,10 @@ class TestResultInR:
     def test_sl_vaut_moins_1r(self):
         assert result_in_r("SL", Decimal("2.0000")) == Decimal("-1")
 
+    def test_be_vaut_0r(self):
+        """Clôture break-even : sortie à l'entrée, ni gain ni perte."""
+        assert result_in_r("BE", Decimal("2.0000")) == Decimal("0")
+
 
 class TestComputeStats:
     def test_aucun_trade(self):
