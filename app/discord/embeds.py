@@ -273,17 +273,19 @@ def build_signal_embed(
     if lignes_setup:
         embed.add_field(name="Setup", value="\n".join(lignes_setup), inline=False)
     # Sorties partielles suggérées (scale-out 1/3) : le risque initial
-    # (entry - SL) définit TP1/TP2/TP3. BE à +1,5R (mi-chemin TP1→TP2) :
-    # quand ce niveau est atteint, le solde est protégé au prix d'entrée.
+    # (entry - SL) définit TP1/TP2. TP3 n'a PAS de take profit : le solde
+    # reste ouvert (gestion libre). BE à +1,5R (mi-chemin TP1→TP2) : quand
+    # ce niveau est atteint, le solde est protégé au prix d'entrée — avec
+    # TP1 pris à +1R, un retour à l'entrée laisse le trade à +1R sans perte.
     # Décision de gestion humaine, aucun ordre.
-    tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
+    tp1, tp2 = scaled_targets(action, entry_price, stop_loss, multiples=(1, 2))
     be_trigger = scaled_targets(action, entry_price, stop_loss, multiples=(1.5,))[0]
     embed.add_field(
         name="Sorties partielles (suggestion)",
         value=(
             f"TP1 : {format_price(tp1)} (+1R · {format_pips(symbol, entry_price, tp1)})\n"
             f"TP2 : {format_price(tp2)} (+2R · {format_pips(symbol, entry_price, tp2)})\n"
-            f"TP3 : {format_price(tp3)} (+3R · {format_pips(symbol, entry_price, tp3)})\n"
+            f"TP3 : ouvert\n"
             f"BE : SL → entrée à {format_price(be_trigger)} (+1,5R)"
         ),
         inline=False,
@@ -383,14 +385,14 @@ def build_advance_embed(
     lignes_setup = setup_lines(strategy, score_components)
     if lignes_setup:
         embed.add_field(name="Setup", value="\n".join(lignes_setup), inline=False)
-    tp1, tp2, tp3 = scaled_targets(action, entry_price, stop_loss)
+    tp1, tp2 = scaled_targets(action, entry_price, stop_loss, multiples=(1, 2))
     be_trigger = scaled_targets(action, entry_price, stop_loss, multiples=(1.5,))[0]
     embed.add_field(
         name="Sorties partielles (suggestion)",
         value=(
             f"TP1 : {format_price(tp1)} (+1R · {format_pips(symbol, entry_price, tp1)})\n"
             f"TP2 : {format_price(tp2)} (+2R · {format_pips(symbol, entry_price, tp2)})\n"
-            f"TP3 : {format_price(tp3)} (+3R · {format_pips(symbol, entry_price, tp3)})\n"
+            f"TP3 : ouvert\n"
             f"BE : SL → entrée à {format_price(be_trigger)} (+1,5R)"
         ),
         inline=False,

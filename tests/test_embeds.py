@@ -88,16 +88,17 @@ class TestEmbed:
         assert champs["Signal Time"] == "22:14:03 UTC"
 
     def test_sorties_partielles_buy(self):
-        # Risque = 104532.42 - 103800 = 732.42 -> TP1/2/3 à +1R/+2R/+3R,
-        # déclencheur BE à +1,5R (mi-chemin TP1->TP2). Pips arrondis au plus
-        # proche : 732.42 -> 732, 1464.84 -> 1465, 2197.26 -> 2197.
+        # Risque = 104532.42 - 103800 = 732.42 -> TP1/TP2 à +1R/+2R,
+        # déclencheur BE à +1,5R (mi-chemin TP1->TP2). TP3 = ouvert, sans
+        # take profit (solde laissé en gestion libre). Pips arrondis au plus
+        # proche : 732.42 -> 732, 1464.84 -> 1465.
         embed = _embed("BUY")
         champs = {f.name: f.value for f in embed.fields}
         partielles = champs["Sorties partielles (suggestion)"]
         assert partielles == (
             "TP1 : 105,264.84 (+1R · +732 pips)\n"
             "TP2 : 105,997.26 (+2R · +1,465 pips)\n"
-            "TP3 : 106,729.68 (+3R · +2,197 pips)\n"
+            "TP3 : ouvert\n"
             "BE : SL → entrée à 105,631.05 (+1,5R)"
         )
 
@@ -109,7 +110,7 @@ class TestEmbed:
         assert partielles == (
             "TP1 : 103,800 (+1R · +732 pips)\n"
             "TP2 : 103,067.58 (+2R · +1,465 pips)\n"
-            "TP3 : 102,335.16 (+3R · +2,197 pips)\n"
+            "TP3 : ouvert\n"
             "BE : SL → entrée à 103,433.79 (+1,5R)"
         )
 
