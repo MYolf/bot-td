@@ -205,7 +205,7 @@ class TestClosureEmbed:
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Position"] == "LONG 🟢"
         assert champs["Sortie"] == "104"
-        assert champs["Résultat"] == "+2 R"
+        assert champs["Résultat"] == "+2R"  # format_r_fr : virgule FR, pas d'espace
 
     def test_cloture_be_titre_jaune_et_0r(self):
         """Clôture break-even : titre dédié, couleur jaune, résultat +0R."""

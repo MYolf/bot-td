@@ -70,7 +70,8 @@ async def lifespan(app: FastAPI):
         set_notifier(
             DiscordService(bot, settings.discord_signals_channel_id)
         )
-        # Notifieur du salon récap : clôtures TP/SL en direct + récap quotidien.
+        # Notifieur du salon récap : récap hebdomadaire (vendredi soir) ;
+        # les clôtures TP/SL en direct partent dans les salons SL/TP dédiés.
         if settings.discord_recap_channel_id is not None:
             set_recap_notifier(
                 DiscordService(bot, settings.discord_recap_channel_id)

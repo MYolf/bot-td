@@ -138,6 +138,21 @@ class TestComputeStats:
         # Cumul 2, 4, 3, 2 : peak 4 puis retour à 2 -> drawdown max 2.
         assert stats.max_drawdown_r == Decimal("2")
 
+    def test_break_even_ni_gagnant_ni_perdant(self):
+        """Un 0R (sortie BE) est exclu du win rate (trades départagés)."""
+        stats = compute_stats([Decimal("2"), Decimal("0"), Decimal("-1")])
+        assert stats.total == 3
+        assert stats.wins == 1
+        assert stats.losses == 1
+        assert stats.breakeven == 1
+        assert stats.win_rate == Decimal("50")  # 1 gagnant / 2 départagés
+        assert stats.total_r == Decimal("1")  # le 0R pèse bien 0
+
+    def test_uniquement_break_even(self):
+        stats = compute_stats([Decimal("0"), Decimal("0")])
+        assert stats.win_rate == Decimal("0")  # aucun trade départagé
+        assert stats.total_r == Decimal("0")
+
     def test_max_drawdown_cumule(self):
         # Séquence : +1, -1, -1, +1 -> drawdown max 2 (après le peak à 1).
         stats = compute_stats([Decimal("1"), Decimal("-1"), Decimal("-1"), Decimal("1")])

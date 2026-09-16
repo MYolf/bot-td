@@ -24,8 +24,8 @@ from engine.advance import (
 )
 from engine.config import EngineSettings
 from engine.runner import SignalEngine
+from engine.levels import bullish_at, trigger_level
 from engine.strategy import Candle, MomentumParams
-from engine.touch_study import bullish_at, trigger_level
 from tests.test_engine_runner import (  # noqa: F401 (fixture partagée)
     FakeFetcher,
     FakeSender,

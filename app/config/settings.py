@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     discord_logs_channel_id: int | None = Field(
         default=None, alias="DISCORD_LOGS_CHANNEL_ID"
     )
-    # Salon du suivi des trades : clôtures TP/SL en direct + récap quotidien.
+    # Salon du récap hebdomadaire (vendredi 22h) : le seul envoi planifié de
+    # ce salon — les clôtures TP/SL en direct vont dans les salons SL/TP.
     discord_recap_channel_id: int | None = Field(
         default=None, alias="DISCORD_RECAP_CHANNEL_ID"
     )

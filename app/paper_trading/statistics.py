@@ -21,7 +21,8 @@ class PerformanceStats:
     total: int
     wins: int
     losses: int
-    win_rate: Decimal  # en %
+    breakeven: int  # clôtures à 0R (BE) : ni gagnantes ni perdantes
+    win_rate: Decimal  # en % (gagnants / trades départagés, BE exclus)
     total_r: Decimal
     avg_r: Decimal  # = expectancy
     median_r: Decimal
@@ -46,6 +47,7 @@ def compute_stats(results: list[Decimal]) -> PerformanceStats:
             total=0,
             wins=0,
             losses=0,
+            breakeven=0,
             win_rate=Decimal("0"),
             total_r=Decimal("0"),
             avg_r=Decimal("0"),
@@ -56,8 +58,11 @@ def compute_stats(results: list[Decimal]) -> PerformanceStats:
             max_drawdown_r=Decimal("0"),
         )
 
+    # Un break-even (0R) n'est NI un gain NI une perte (« ni gain ni perte »,
+    # result_in_r("BE") = 0) : il n'entre dans ni les gagnants ni les perdants.
     wins = [r for r in results if r > 0]
-    losses = [r for r in results if r <= 0]
+    losses = [r for r in results if r < 0]
+    breakeven = [r for r in results if r == 0]
     total_r = sum(results, Decimal("0"))
 
     gains = sum(wins, Decimal("0"))
@@ -83,11 +88,18 @@ def compute_stats(results: list[Decimal]) -> PerformanceStats:
     else:  # nombre pair : moyenne des deux valeurs centrales
         median = (tri[total // 2 - 1] + tri[total // 2]) / Decimal("2")
 
+    # Win rate sur les trades départagés (gagnants + perdants) : les BE ne
+    # comptent ni pour ni contre — cohérent avec un RR 1:2 (seuil 33,3 %).
+    departages = len(wins) + len(losses)
+    win_rate = (
+        _round(Decimal(len(wins)) * 100 / Decimal(departages)) if departages else Decimal("0")
+    )
     return PerformanceStats(
         total=total,
         wins=len(wins),
         losses=len(losses),
-        win_rate=_round(Decimal(len(wins)) * 100 / Decimal(total)),
+        breakeven=len(breakeven),
+        win_rate=win_rate,
         total_r=_round(total_r),
         avg_r=_round(total_r / Decimal(total)),
         median_r=_round(median),

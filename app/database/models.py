@@ -19,6 +19,7 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -47,6 +48,9 @@ class Strategy(Base):
 class Signal(Base):
     __tablename__ = "signals"
     __table_args__ = (
+        # Même nom que la migration b7e2d4c1a9f3 : sans nom explicite, un
+        # autogenerate voudrait recréer la contrainte existante en base.
+        UniqueConstraint("sequence_number", name="uq_signals_sequence_number"),
         CheckConstraint("action IN ('BUY', 'SELL')", name="ck_signals_action"),
         CheckConstraint(
             "status IN ('RECEIVED', 'VALIDATED', 'SENT', 'REJECTED', 'DUPLICATE', 'ERROR')",
@@ -57,9 +61,10 @@ class Signal(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Numéro de trade séquentiel, unique : attribué à l'insertion (max + 1),
-    # les lignes historiques étant backfillées par ordre d'arrivée.
-    sequence_number: Mapped[int] = mapped_column(Integer, unique=True)
+    # Numéro de trade séquentiel, unique (voir __table_args__) : attribué à
+    # l'insertion (max + 1), les lignes historiques étant backfillées par
+    # ordre d'arrivée.
+    sequence_number: Mapped[int] = mapped_column(Integer)
     # Cœur de la déduplication (Phase 10) : contrainte UNIQUE en base.
     signal_uid: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     strategy_id: Mapped[int] = mapped_column(

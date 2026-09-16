@@ -29,15 +29,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.indicators import atr, ema
-from engine.strategy import Candle, MomentumParams, compute_series
-from engine.touch_study import (
+from engine.levels import (
     FormingState,
-    _wilder_state,
     bearish_at,
     bullish_at,
     score_parts,
     trigger_level,
+    wilder_state,
 )
+from engine.strategy import Candle, MomentumParams, compute_series
 
 ADVANCE_STRATEGY = "momentum_v1"
 
@@ -78,7 +78,7 @@ def forming_state(
     j = len(closes) - 1
     e12 = ema(closes, params.macd_fast)[j]
     e26 = ema(closes, params.macd_slow)[j]
-    avg_gain, avg_loss = _wilder_state(closes, params.rsi_len)
+    avg_gain, avg_loss = wilder_state(closes, params.rsi_len)
     values = (
         series["ema_fast"][j],
         series["ema_slow"][j],

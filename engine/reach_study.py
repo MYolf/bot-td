@@ -50,13 +50,13 @@ from engine.strategy import (
     evaluate_at,
     total_score,
 )
-from engine.touch_study import (
+from engine.levels import (
     FormingState,
-    _wilder_state,
     bearish_at,
     bullish_at,
     score_at,
     trigger_level,
+    wilder_state,
 )
 from engine.validation import load_history
 
@@ -123,7 +123,7 @@ def run_reach_study(
     rsi_values = series["rsi"]
     ema_macd_fast = ema(closes, params.macd_fast)
     ema_macd_slow = ema(closes, params.macd_slow)
-    avg_gain, avg_loss = _wilder_state(closes, params.rsi_len)
+    avg_gain, avg_loss = wilder_state(closes, params.rsi_len)
     atr_values = atr(highs, lows, closes, 14)
 
     def engine_bullish(i: int) -> bool:

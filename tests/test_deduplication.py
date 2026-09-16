@@ -120,6 +120,72 @@ class TestRepositoryDeduplication:
         # Un seul signal stocké : jamais deux messages Discord.
         assert total == 1
 
+    def test_collision_sequence_number_remonte(self):
+        """Une violation UNIQUE autre que signal_uid n'est PAS un doublon.
+
+        Course simulée sur le max+1 : le calcul du prochain numéro retourne
+        une valeur déjà prise (max « périmé ») alors que le signal_uid est
+        nouveau — l'IntegrityError doit remonter au lieu d'un statut
+        DUPLICATE silencieux.
+        """
+
+        class SessionMaxPerime:
+            """Délègue tout à la vraie session, sauf le 1er scalar (le max)
+            qui retourne None comme si la table était vide."""
+
+            def __init__(self, session):
+                self._session = session
+                self._max_vu = False
+
+            async def scalar(self, stmt):
+                if not self._max_vu:
+                    self._max_vu = True
+                    return None
+                return await self._session.scalar(stmt)
+
+            def add(self, obj):
+                self._session.add(obj)
+
+            async def flush(self):
+                await self._session.flush()
+
+            async def rollback(self):
+                await self._session.rollback()
+
+        async def scenario():
+            from sqlalchemy.exc import IntegrityError
+            from sqlalchemy.ext.asyncio import create_async_engine
+            from sqlalchemy.pool import StaticPool
+
+            engine = create_async_engine(
+                "sqlite+aiosqlite://",
+                poolclass=StaticPool,
+                connect_args={"check_same_thread": False},
+            )
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            factory: async_sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+            ts = datetime.now(timezone.utc).replace(microsecond=0)
+            async with factory() as session:
+                strategy = await StrategyRepository(session).get_or_create("momentum_v1")
+                await SignalRepository(session).insert_validated(_signal(ts), strategy.id)
+                await session.commit()  # occupe sequence_number = 1
+
+            async with factory() as session:
+                strategy = await StrategyRepository(session).get_or_create("momentum_v1")
+                # Max périmé → numéro 1 déjà pris, uid pourtant nouveau.
+                repo = SignalRepository(SessionMaxPerime(session))  # type: ignore[arg-type]
+                try:
+                    await repo.insert_validated(_signal(ts + timedelta(minutes=1)), strategy.id)
+                    raise AssertionError("IntegrityError attendue")
+                except IntegrityError:
+                    pass  # attendu : la course remonte, pas de DUPLICATE
+
+            await engine.dispose()
+
+        self._run(scenario())
+
     def test_get_or_create_strategy(self):
         async def scenario() -> tuple[int, int]:
             from sqlalchemy.ext.asyncio import create_async_engine

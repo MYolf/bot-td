@@ -61,8 +61,9 @@ class DiscordService:
 # --- Instances courantes, branchées dans le lifespan de app.main ---
 
 _notifier: SignalNotifier | None = None
-# Notifieur du salon récap quotidien (clôtures TP/SL, résumé de 22h) : peut
-# rester None (salon non configuré) — les notifications sont alors ignorées.
+# Notifieur du salon récap (clôtures TP/SL en direct) : peut rester None
+# (salon non configuré) — les notifications sont alors ignorées. Le récap
+# hebdomadaire du vendredi est le seul envoi planifié de ce salon.
 _recap_notifier: SignalNotifier | None = None
 # Notifieur du salon des logs (alertes de santé) : None = salon non configuré.
 _health_notifier: SignalNotifier | None = None
@@ -179,7 +180,8 @@ def closure_notifier(exit_reason: str) -> SignalNotifier | None:
 
 
 async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:
-    """Publie l'embed de clôture d'une position paper dans le salon récap.
+    """Publie l'embed de clôture d'une position paper dans le salon dédié
+    (SL/BE ou TP selon la raison de sortie, voir closure_notifier).
 
     Best-effort : un échec d'envoi est loggé et n'affecte jamais le pipeline
     (la clôture reste enregistrée en base).

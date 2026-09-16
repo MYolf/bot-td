@@ -143,8 +143,9 @@ def score_sur_100(score: int, components: dict[str, int] | None) -> str:
     """Score affiché sur 100, recalibré sur le maximum des composantes envoyées.
 
     momentum_v1 n'évalue que 55 points de barème : 45/55 s'affiche « 82/100 ».
-    Sans composantes (anciens signaux) : score brut en points, pas d'échelle
-    inventée. Le score reste un indicateur interne, pas une probabilité.
+    Sans composantes (anciens signaux, colonnes score_* vides) : score brut
+    affiché en points (« 45 pts »), pas d'échelle inventée. Le score reste un
+    indicateur interne, pas une probabilité.
     """
     if components:
         maxi = sum(SCORE_COMPONENT_MAX[field] for field in components)
@@ -622,9 +623,13 @@ def build_stats_embed(
     )
     if paper.total > 0:
         pf = "—" if paper.profit_factor is None else str(paper.profit_factor)
+        # Les BE (0R) sont hors win rate : les rendre visibles quand il y en a.
+        compte = f"{paper.wins}W / {paper.losses}L"
+        if paper.breakeven:
+            compte += f" / {paper.breakeven}BE"
         papier = (
             f"{paper.total} clôturées · {ouvertes} ouvertes\n"
-            f"Win rate : {paper.win_rate}% ({paper.wins}W / {paper.losses}L)\n"
+            f"Win rate : {paper.win_rate}% ({compte})\n"
             f"Total : {paper.total_r} R · Moyenne : {paper.avg_r} R · Médiane : {paper.median_r} R\n"
             f"Profit factor : {pf} · Max drawdown : {paper.max_drawdown_r} R\n"
             f"Meilleur : {paper.best_r} R · Pire : {paper.worst_r} R"
@@ -670,9 +675,9 @@ def build_strategies_embed(strategies: list, compte: dict[str, int]) -> discord.
     return embed
 
 
-# --- Suivi des trades : clôtures et récap quotidien ---
-
-ORANGE = 0xE67E22  # récap quotidien
+# --- Suivi des trades : clôtures et récap hebdomadaire ---
+# (ORANGE est défini une seule fois, plus haut : récap hebdo et annulation
+# de pré-alerte partagent la même couleur.)
 
 
 def build_health_alert_embed(*, component: str, detail: str, resolved: bool) -> discord.Embed:
@@ -778,8 +783,7 @@ def build_closure_embed(outcome) -> discord.Embed:
     if is_be:
         resultat = "+0R"  # sortie à l'entrée : solde préservé, ni gain ni perte
     else:
-        signe = "+" if outcome.result_r > 0 else ""
-        resultat = f"{signe}{outcome.result_r.normalize()} R"
+        resultat = format_r_fr(outcome.result_r)
     embed.add_field(name="Résultat", value=resultat, inline=True)
     embed.add_field(
         name="Ouvert le", value=format_day_time(outcome.opened_at), inline=True
@@ -820,15 +824,23 @@ def build_weekly_recap_embed(
     stats = compute_stats([p.result_r for p, _t, _s, _st in cloturees_semaine])
     if stats.total > 0:
         pf = "—" if stats.profit_factor is None else _fmt_fr(stats.profit_factor)
-        perf = (
-            f"{stats.total} trade{'s' if stats.total != 1 else ''}\n"
+        lignes_perf = [
+            f"{stats.total} trade{'s' if stats.total != 1 else ''}",
             f"🟢 {stats.wins} gagnant{'s' if stats.wins != 1 else ''} · "
-            f"🔴 {stats.losses} perdant{'s' if stats.losses != 1 else ''}\n"
-            f"Winrate : {_fmt_fr(stats.win_rate)} %\n"
-            f"Résultat : {format_r_fr(stats.total_r)}\n"
-            f"PF : {pf}\n"
-            f"Moyenne : {format_r_fr(stats.avg_r)}"
-        )
+            f"🔴 {stats.losses} perdant{'s' if stats.losses != 1 else ''}",
+        ]
+        if stats.breakeven:
+            lignes_perf.append(
+                f"🟡 {stats.breakeven} break-even"
+                f"{'s' if stats.breakeven != 1 else ''} (0R)"
+            )
+        lignes_perf += [
+            f"Winrate : {_fmt_fr(stats.win_rate)} %",
+            f"Résultat : {format_r_fr(stats.total_r)}",
+            f"PF : {pf}",
+            f"Moyenne : {format_r_fr(stats.avg_r)}",
+        ]
+        perf = "\n".join(lignes_perf)
     else:
         perf = "0 trade\nAucune clôture cette semaine"
     embed.add_field(name="📈 Performance", value=perf, inline=False)
@@ -900,16 +912,16 @@ def build_performance_embed(
         inline=False,
     )
     pf = "—" if stats.profit_factor is None else _fmt_fr(stats.profit_factor)
-    embed.add_field(
-        name="Détail (historique complet)",
-        value=(
-            f"Winrate : {_fmt_fr(stats.win_rate)} %\n"
-            f"Profit Factor : {pf}\n"
-            f"Expectancy : {format_r_fr(stats.avg_r)}\n"
-            f"Max Drawdown : -{_fmt_fr(stats.max_drawdown_r)}R\n"
-            f"Trades : {stats.total}"
-        ),
-        inline=False,
-    )
+    lignes = [f"Winrate : {_fmt_fr(stats.win_rate)} %"]
+    if stats.breakeven:
+        # 0R n'entre ni dans les gagnants ni dans les perdants (hors winrate).
+        lignes.append(f"Break-even : {stats.breakeven} (0R)")
+    lignes += [
+        f"Profit Factor : {pf}",
+        f"Expectancy : {format_r_fr(stats.avg_r)}",
+        f"Max Drawdown : -{_fmt_fr(stats.max_drawdown_r)}R",
+        f"Trades : {stats.total}",
+    ]
+    embed.add_field(name="Détail (historique complet)", value="\n".join(lignes), inline=False)
     embed.set_footer(text="Paper trading — simulation locale en R, aucun ordre réel")
     return embed

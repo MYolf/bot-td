@@ -102,8 +102,9 @@ class SignalRepository:
             action=signal.action,
         )
         # Numéro de trade séquentiel : max + 1 (les signaux arrivent d'un seul
-        # moteur, séquentiellement ; la contrainte UNIQUE rattraperait une
-        # course en la traitant comme un doublon).
+        # moteur, séquentiellement ; en cas de course malgré tout, la violation
+        # UNIQUE de sequence_number remonte au lieu d'être confondue avec un
+        # doublon de signal_uid).
         dernier_numero = await self._session.scalar(
             select(func.max(Signal.sequence_number))
         )
@@ -138,6 +139,15 @@ class SignalRepository:
             await self._session.flush()
         except IntegrityError:
             await self._session.rollback()
+            # Une violation UNIQUE sur signal_uid = doublon (déduplication).
+            # Une autre contrainte (ex. sequence_number en cas de course sur
+            # le max+1) n'est PAS un doublon : on la laisse remonter au lieu
+            # de classer silencieusement le signal en DUPLICATE.
+            exists = await self._session.scalar(
+                select(Signal.id).where(Signal.signal_uid == signal_uid)
+            )
+            if exists is None:
+                raise
             logger.info("Signal dupliqué ignoré signal_uid=%s", signal_uid)
             return InsertResult(duplicate=True, signal_id=None, signal_uid=signal_uid)
         return InsertResult(
@@ -361,7 +371,7 @@ class PaperRepository:
             or 0
         )
 
-    # --- Récap quotidien (positions ouvertes/clôturées par période) ---
+    # --- Récap hebdomadaire (positions ouvertes/clôturées par période) ---
 
     async def opened_between(
         self, start: datetime, end: datetime
