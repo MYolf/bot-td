@@ -606,7 +606,7 @@ class TestSortiesPartielles:
 
 class TestClotureBreakEven:
     """Clôture BE : position protégée au break-even (rappel +1,5R émis) puis
-    prix revenu à l'entrée -> clôture à l'entrée, +0R, salon SL.
+    prix revenu à l'entrée -> clôture à l'entrée, +0R, salon BE.
 
     BUY entry 100 / SL 98 / TP 104 : déclencheur BE = 103, entrée = 100.
     """
@@ -657,11 +657,17 @@ class TestClotureBreakEven:
         assert trade.exit_reason == "BE"
         assert trade.exit_price == Decimal("100")  # sortie au niveau de l'entrée
 
-    def test_cloture_be_notifiee_dans_le_salon_sl(self, client):
-        from app.services.discord_service import set_sl_notifier, set_tp_notifier
+    def test_cloture_be_notifiee_dans_le_salon_be(self, client):
+        from app.services.discord_service import (
+            set_be_notifier,
+            set_sl_notifier,
+            set_tp_notifier,
+        )
 
+        fake_be = FakeNotifier()
         fake_sl = FakeNotifier()
         fake_tp = FakeNotifier()
+        set_be_notifier(fake_be)
         set_sl_notifier(fake_sl)
         set_tp_notifier(fake_tp)
         try:
@@ -674,17 +680,23 @@ class TestClotureBreakEven:
                 ),
             )
         finally:
+            set_be_notifier(None)
             set_sl_notifier(None)
             set_tp_notifier(None)
 
         assert response.json()["closed"] == 1
-        # Clôture BE routée vers le salon SL (sortie protégée).
-        assert len(fake_sl.sent) == 1
-        embed = fake_sl.sent[0]
-        assert embed.title == "🛡️ Break-even touché — BTCUSDT"
+        # Salon BE : le rappel +1,5R de la première bougie PUIS la clôture BE.
+        titres_be = [e.title for e in fake_be.sent]
+        assert titres_be == [
+            "🛡️ Break-even atteint — Trade #1",
+            "🛡️ Break-even touché — BTCUSDT",
+        ]
+        embed = fake_be.sent[-1]
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Trade"] == "#1"
         assert champs["Résultat"] == "+0R"
+        assert "TP1" in champs["Gestion"]
+        assert len(fake_sl.sent) == 0
         # Côté TP : uniquement le rappel TP1 de la première bougie, rien d'autre.
         titres_tp = [e.title for e in fake_tp.sent]
         assert titres_tp == ["✅ TP1 validé — Trade #1"]

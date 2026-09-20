@@ -243,6 +243,67 @@ class TestEmbedRecap:
         assert texte["Directions"] == "🔴 SELL : +2R"
         assert texte["Extrêmes"] == "🏆 Meilleur : +2R\n📉 Pire : +2R"
 
+    def test_be_troisieme_categorie_pas_un_perdant(self, client):
+        """Une clôture BE (0R) apparaît en 3e catégorie ⚪, jamais comme une
+        perte : 🟢 gagnants · 🔴 perdants · ⚪ BE."""
+        _seed(client)
+
+        def _ajoute_cloture_be():
+            async def run():
+                async with client.db_factory() as session:
+                    signal = Signal(
+                        signal_uid="momentum_v1:SOLUSDT:15:be:SELL",
+                        sequence_number=99,
+                        strategy_id=1,
+                        symbol="SOLUSDT",
+                        exchange="BINANCE",
+                        timeframe="15",
+                        action="SELL",
+                        entry_price=Decimal("100"),
+                        stop_loss=Decimal("102"),
+                        take_profit=Decimal("96"),
+                        risk_reward=Decimal("2"),
+                        signal_timestamp=SEMAINE_DEBUT_UTC,
+                        received_at=SEMAINE_DEBUT_UTC,
+                        status="SENT",
+                    )
+                    session.add(signal)
+                    await session.flush()
+                    position = PaperPosition(
+                        signal_id=signal.id,
+                        status="CLOSED",
+                        opened_at=SEMAINE_DEBUT_UTC,
+                        closed_at=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+                        result_r=Decimal("0"),
+                    )
+                    session.add(position)
+                    await session.flush()
+                    session.add(
+                        PaperTrade(
+                            paper_position_id=position.id,
+                            exit_reason="BE",
+                            exit_price=Decimal("100"),
+                            closed_at=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+                        )
+                    )
+                    await session.commit()
+
+            asyncio.run(run())
+
+        _ajoute_cloture_be()
+        _ouvertes, cloturees, en_cours = _partition(client)
+        embed = build_weekly_recap_embed(
+            debut=SEMAINE_DEBUT_UTC.astimezone(PARIS),
+            fin=NOW.astimezone(PARIS),
+            cloturees_semaine=cloturees,
+            en_cours=en_cours,
+        )
+        texte = {f.name: f.value for f in embed.fields}
+        # 1 gagnant (+2R), 0 perdant, 1 BE (0R) : trois catégories distinctes.
+        assert "🟢 1 gagnant · 🔴 0 perdants · ⚪ 1 BE" in texte["📈 Performance"]
+        # Le BE ne gonfle ni les perdants ni le total R (toujours +2R).
+        assert "Résultat : +2R" in texte["📈 Performance"]
+
         # Toutes les positions ouvertes restent affichées, une ligne chacune
         # (ordre d'ouverture : SOL puis BTC), heure de Paris.
         assert texte["⏳ En cours (2)"] == (

@@ -624,9 +624,9 @@ def build_stats_embed(
     if paper.total > 0:
         pf = "—" if paper.profit_factor is None else str(paper.profit_factor)
         # Les BE (0R) sont hors win rate : les rendre visibles quand il y en a.
-        compte = f"{paper.wins}W / {paper.losses}L"
+        compte = f"🟢 {paper.wins}W / 🔴 {paper.losses}L"
         if paper.breakeven:
-            compte += f" / {paper.breakeven}BE"
+            compte += f" / ⚪ {paper.breakeven}BE"
         papier = (
             f"{paper.total} clôturées · {ouvertes} ouvertes\n"
             f"Win rate : {paper.win_rate}% ({compte})\n"
@@ -785,6 +785,14 @@ def build_closure_embed(outcome) -> discord.Embed:
     else:
         resultat = format_r_fr(outcome.result_r)
     embed.add_field(name="Résultat", value=resultat, inline=True)
+    if is_be:
+        # Parcours type d'une clôture BE : le déclencheur +1,5R n'est armé
+        # qu'après TP1 (+1R), forcément touché avant le retour à l'entrée.
+        embed.add_field(
+            name="Gestion",
+            value="TP1 ✅ touché (+1R) · BE armé (+1,5R) · retour à l'entrée",
+            inline=False,
+        )
     embed.add_field(
         name="Ouvert le", value=format_day_time(outcome.opened_at), inline=True
     )
@@ -827,13 +835,13 @@ def build_weekly_recap_embed(
         lignes_perf = [
             f"{stats.total} trade{'s' if stats.total != 1 else ''}",
             f"🟢 {stats.wins} gagnant{'s' if stats.wins != 1 else ''} · "
-            f"🔴 {stats.losses} perdant{'s' if stats.losses != 1 else ''}",
+            f"🔴 {stats.losses} perdant{'s' if stats.losses != 1 else ''}"
+            + (
+                f" · ⚪ {stats.breakeven} BE"
+                if stats.breakeven
+                else ""
+            ),
         ]
-        if stats.breakeven:
-            lignes_perf.append(
-                f"🟡 {stats.breakeven} break-even"
-                f"{'s' if stats.breakeven != 1 else ''} (0R)"
-            )
         lignes_perf += [
             f"Winrate : {_fmt_fr(stats.win_rate)} %",
             f"Résultat : {format_r_fr(stats.total_r)}",
@@ -913,14 +921,16 @@ def build_performance_embed(
     )
     pf = "—" if stats.profit_factor is None else _fmt_fr(stats.profit_factor)
     lignes = [f"Winrate : {_fmt_fr(stats.win_rate)} %"]
+    # 0R n'entre ni dans les gagnants ni dans les perdants (hors winrate) :
+    # répartition en 3 catégories sur la ligne des trades.
+    compte_trades = f"🟢 {stats.wins} · 🔴 {stats.losses}"
     if stats.breakeven:
-        # 0R n'entre ni dans les gagnants ni dans les perdants (hors winrate).
-        lignes.append(f"Break-even : {stats.breakeven} (0R)")
+        compte_trades += f" · ⚪ {stats.breakeven} BE"
     lignes += [
         f"Profit Factor : {pf}",
         f"Expectancy : {format_r_fr(stats.avg_r)}",
         f"Max Drawdown : -{_fmt_fr(stats.max_drawdown_r)}R",
-        f"Trades : {stats.total}",
+        f"Trades : {stats.total} ({compte_trades})",
     ]
     embed.add_field(name="Détail (historique complet)", value="\n".join(lignes), inline=False)
     embed.set_footer(text="Paper trading — simulation locale en R, aucun ordre réel")

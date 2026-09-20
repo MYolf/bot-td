@@ -221,6 +221,9 @@ class TestClosureEmbed:
         champs = {f.name: f.value for f in embed.fields}
         assert champs["Sortie"] == "100"  # sortie à l'entrée
         assert champs["Résultat"] == "+0R"
+        # Parcours de gestion rappelé : TP1 touché avant l'armement BE.
+        assert "TP1" in champs["Gestion"]
+        assert "BE armé" in champs["Gestion"]
 
 
 class TestStatsEmbed:
@@ -267,6 +270,14 @@ class TestStatsEmbed:
         embed = self._embed(paper=compute_stats([Decimal("2")]))
         champs = {f.name: f.value for f in embed.fields}
         assert "Profit factor : —" in champs["Paper trading (R)"]
+
+    def test_compte_trois_categories_avec_be(self):
+        """🟢 gagnants · 🔴 perdants · ⚪ BE : un 0R n'est pas une perte."""
+        embed = self._embed(
+            paper=compute_stats([Decimal("2"), Decimal("0"), Decimal("-1")])
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert "(🟢 1W / 🔴 1L / ⚪ 1BE)" in champs["Paper trading (R)"]
 
 
 class TestNumeroDeTrade:
@@ -511,3 +522,13 @@ class TestPerformanceEmbed:
         assert "Max Drawdown : -2R" in detail
         assert "Trades : 4" in detail
         assert "aucun ordre réel" in embed.footer.text
+
+    def test_trades_repartition_trois_categories_avec_be(self):
+        """Un 0R est une 3e catégorie ⚪ BE, pas un perdant."""
+        stats = compute_stats([Decimal("2"), Decimal("0"), Decimal("-1")])
+        embed = build_performance_embed(
+            periodes=[("Total", Decimal("1"))],
+            stats=stats,
+        )
+        champs = {f.name: f.value for f in embed.fields}
+        assert "Trades : 3 (🟢 1 · 🔴 1 · ⚪ 1 BE)" in champs["Détail (historique complet)"]

@@ -173,15 +173,19 @@ def provide_tp_notifier() -> SignalNotifier | None:
 
 
 def closure_notifier(exit_reason: str) -> SignalNotifier | None:
-    """Notifieur du salon de clôture selon la raison : SL et BE (sortie
-    protégée) -> salon SL, TP -> salon TP (le salon récap ne reçoit que le
-    récap hebdo)."""
-    return _sl_notifier if exit_reason in ("SL", "BE") else _tp_notifier
+    """Notifieur du salon de clôture selon la raison : SL -> salon SL,
+    TP -> salon TP, BE -> salon BE (le rappel BE y est déjà passé, la
+    clôture à 0R le rejoint ; le salon récap ne reçoit que le récap hebdo)."""
+    if exit_reason == "SL":
+        return _sl_notifier
+    if exit_reason == "BE":
+        return _be_notifier
+    return _tp_notifier
 
 
 async def notify_closure(outcome, notifier: SignalNotifier | None) -> None:
     """Publie l'embed de clôture d'une position paper dans le salon dédié
-    (SL/BE ou TP selon la raison de sortie, voir closure_notifier).
+    (SL, TP ou BE selon la raison de sortie, voir closure_notifier).
 
     Best-effort : un échec d'envoi est loggé et n'affecte jamais le pipeline
     (la clôture reste enregistrée en base).
