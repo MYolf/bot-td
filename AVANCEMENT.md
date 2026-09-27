@@ -276,6 +276,17 @@ Question posée par l'utilisateur : garder le 15m **et** ajouter un moteur 1H po
 
 L'utilisateur laisse tourner la config actuelle 3 semaines. **`PLAN_EVALUATION.md`** (racine) contient le plan complet à appliquer **le vendredi 25/09/2026** : PLAN VERT (conforme à l'audit → ne rien toucher, mesure 3 mois) et PLAN ROUGE (sous l'audit → vérif technique d'abord, puis backtest comparatif, puis décision). Critère de jugement : expectancy en R (le win rate 6/10 est inadapté au RR 1:2 — seuil de rentabilité 33,3 %), avec minimum 15 trades clôturés. Nettoyage associé : suppression de `data/cache/` (61 Mo régénérables) et `data/fib_dump/` (étude Fibonacci rejetée).
 
+### Bilan de la période d'observation — 2026-09-25, ZONE GRISE (ni VERT ni ROUGE)
+
+Application de `PLAN_EVALUATION.md` le jour J, chiffres extraits en lecture seule de la base de prod (VPS, fenêtre = clôtures du 03/09 00h00 au 25/09 24h00 heure de Paris) :
+
+- **23 trades clôturés** (22 ouverts dans la fenêtre + trade #6 ouvert le 02/09) : 7 TP / 16 SL / 0 BE.
+- **Total : −2,00 R** (expectancy −0,087 R) ; **win rate 30,4 %** (7/22 départagés).
+- Vérif technique (PLAN ROUGE étape 1, préventive) : pipeline cohérent — 22 signaux SENT → 22 positions ouvertes, aucun REJECTED/DUPLICATE/ERROR. Détail : SELL +3R (6 trades), BUY ETH −1R (10), BUY BTC −4R (7).
+- **Critères scellés** : PLAN VERT requis R ≥ 0 (✗ −2) ; PLAN ROUGE exigeait R ≤ −5R ou win rate < 25 % (✗ des deux, 30,4 %). → **zone grise**.
+- **Lecture statistique** : 7 gagnants sur 22 avec une vraie probabilité de 36 % est dans la variance (attendu ≈ 8, écart-type ≈ 2,2). Le live est compatible avec l'audit 4 ans filtre 45 (brut ≈ 0, taker ≈ 0). Aucun bug, aucun effondrement vs backtest.
+- **Décision** : on ne touche à rien (interdit absolu de paramétrage sur fenêtre courte). Mesure prolongée jusqu'à fin novembre 2026, point de contrôle **15/10/2026** (relance audit 4 ans + comparaison live vs backtest). Vigilance : si le win rate reste < 30 % sur ≥ 60 trades à 3 mois, bascule PLAN ROUGE étape 4 (MIN_SCORE=0 ou statut outil d'observation).
+
 ### Jour et heure des trades dans les embeds (2026-09-03, DÉCISION UTILISATEUR)
 
 Demande : afficher le **jour et l'heure** des trades dans les embeds de clôture TP/SL et le récap hebdo, en **heure de Paris** (destination inchangée : salon récap).
