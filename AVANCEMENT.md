@@ -287,6 +287,16 @@ Application de `PLAN_EVALUATION.md` le jour J, chiffres extraits en lecture seul
 - **Lecture statistique** : 7 gagnants sur 22 avec une vraie probabilité de 36 % est dans la variance (attendu ≈ 8, écart-type ≈ 2,2). Le live est compatible avec l'audit 4 ans filtre 45 (brut ≈ 0, taker ≈ 0). Aucun bug, aucun effondrement vs backtest.
 - **Décision** : on ne touche à rien (interdit absolu de paramétrage sur fenêtre courte). Mesure prolongée jusqu'à fin novembre 2026, point de contrôle **15/10/2026** (relance audit 4 ans + comparaison live vs backtest). Vigilance : si le win rate reste < 30 % sur ≥ 60 trades à 3 mois, bascule PLAN ROUGE étape 4 (MIN_SCORE=0 ou statut outil d'observation).
 
+### Étude « SL élargi » — 2026-09-27, REJET (gate G5)
+
+Piste restante des audits (« SL plus large pour diluer les frais »), testée avec la discipline Ph34 : spec scellée `SL_ELARGI.md` AVANT exécution. Grille figée k ∈ {1,2,3,4} (`sl_pct=0,01k`, `tp_pct=0,02k`, RR 1:2 constant, transitions identiques), fenêtres scellées IS 2022-08-15 → 2025-03-12 / OOS 2025-03-12 → 2026-09-13 (dataset en cache figé au 2026-09-13), simulateur commun, min_score 45 (sémantique production).
+
+- **IS** : BTC positif en taker à tous les k (k=4 : +0,105R, n=240) ; ETH négatif à k=1-3, k=4 seul positif (+0,015R, n=290) → k=4 figé (G3, seul à passer G1+G2 sur les deux symboles).
+- **OOS (consommé une fois)** : BTC k=4 +0,025R (n=133) ✓ ; ETH k=4 +0,00005R exact (n=195, PF=1,0) — G4 passe au signe près mais **G5 échoue : k=4 ne bat pas k=1 sur ETH OOS** (+0,003R).
+- **VERDICT : REJET sans retouche** (grille figée, interdiction de raffiner après consultation). momentum_v1 + filtre 45 inchangés en production.
+- Leçons : la dilution des frais par bracket élargi est réelle (BTC) mais ne crée pas d'accord inter-symboles ; ETH reste à l'équilibre quel que soit k ; l'hypothèse « win rate ↑ avec bracket large » est fausse (ETH OOS : 33,3 % à k=4 vs 37,4 % à k=1) ; meilleur cas net observé ≤ +0,105R = marginal.
+- Code : `engine/sl_study.py` + `tests/test_engine_sl_study.py` (10 tests, 558/558 au total). Sorties brutes : `data/sl_study_*.txt` (non versionnées).
+
 ### Jour et heure des trades dans les embeds (2026-09-03, DÉCISION UTILISATEUR)
 
 Demande : afficher le **jour et l'heure** des trades dans les embeds de clôture TP/SL et le récap hebdo, en **heure de Paris** (destination inchangée : salon récap).
